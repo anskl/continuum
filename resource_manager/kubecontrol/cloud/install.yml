@@ -51,3 +51,52 @@
         state: absent
       with_items:
         - /tmp/join-command.txt
+
+    - name: Install Kata
+      shell: |
+        wget https://github.com/kata-containers/kata-containers/releases/download/3.1.3/kata-static-3.1.3-x86_64.tar.xz
+        xzcat kata-static-3.1.3-x86_64.tar.xz | sudo tar -xvf - -C /
+
+        sudo ln -s /opt/kata/bin/kata-runtime /usr/local/bin
+        sudo ln -s /opt/kata/bin/containerd-shim-kata-v2 /usr/local/bin
+
+        rm kata-static-3.1.3-x86_64.tar.xz
+
+        sudo mkdir -p /var/lib/containerd/devmapper
+
+        sudo touch /var/lib/containerd/devmapper/data
+        sudo truncate -s 1G /var/lib/containerd/devmapper/data
+
+        sudo touch /var/lib/containerd/devmapper/meta
+        sudo truncate -s 1G /var/lib/containerd/devmapper/meta
+
+        DATA_DEV=$(sudo losetup --find --show /var/lib/containerd/devmapper/data)
+        META_DEV=$(sudo losetup --find --show /var/lib/containerd/devmapper/meta)
+
+        DATA_SIZE="$(sudo blockdev --getsize64 -q ${DATA_DEV})"
+        LENGTH_IN_SECTORS=$((DATA_SIZE / 512))
+
+        sudo dmsetup create devpool --table "0 ${LENGTH_IN_SECTORS} thin-pool ${META_DEV} ${DATA_DEV} 128 32768"
+
+        file_path='/etc/containerd/config.toml'
+
+        line_number=$(grep -n 'io.containerd.snapshotter.v1.devmapper' "$file_path" | cut -d ":" -f 1)
+
+        sudo sed -i "$((line_number + 1)) c\    pool_name = \"devpool\"" "$file_path"
+        sudo sed -i "$((line_number + 2)) c\    root_path = \"/var/lib/containerd/devmapper\"" "$file_path"
+        sudo sed -i "$((line_number + 3)) c\    base_image_size = \"1GB\"" "$file_path"
+        sudo sed -i "$((line_number + 4)) c\    discard_blocks = true" "$file_path"
+
+        sudo systemctl restart containerd
+
+        echo '#!/bin/bash' | sudo tee -a /usr/local/bin/containerd-shim-kata-fc-v2 > /dev/null
+        echo 'KATA_CONF_FILE=/opt/kata/share/defaults/kata-containers/configuration-fc.toml /opt/kata/bin/containerd-shim-kata-v2 $@' | sudo tee -a /usr/local/bin/containerd-shim-kata-fc-v2 > /dev/null
+
+        sudo chmod +x /usr/local/bin/containerd-shim-kata-fc-v2
+
+        line_number=$(grep -n 'containerd.runtimes]' "$file_path" | cut -d ":" -f 1)
+
+        sed -i "$((line_number + 1)) a\         [plugins.\"io.containerd.grpc.v1.cri\".containerd.runtimes.kata-fc]" "$file_path"
+        sed -i "$((line_number + 2)) a\           runtime_type = \"io.containerd.kata-fc.v2\"\n" "$file_path"
+
+        sudo systemctl restart containerd
