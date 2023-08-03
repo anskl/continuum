@@ -62,16 +62,16 @@
 
         rm kata-static-3.1.3-x86_64.tar.xz
 
-        sudo mkdir -p /var/lib/containerd/devmapper
+        sudo mkdir -p /var/lib/containerd/io.containerd.snapshotter.v1.devmapper
 
-        sudo touch /var/lib/containerd/devmapper/data
-        sudo truncate -s 1G /var/lib/containerd/devmapper/data
+        sudo touch /var/lib/containerd/io.containerd.snapshotter.v1.devmapper/data
+        sudo truncate -s 1G /var/lib/containerd/io.containerd.snapshotter.v1.devmapper/data
 
-        sudo touch /var/lib/containerd/devmapper/meta
-        sudo truncate -s 1G /var/lib/containerd/devmapper/meta
+        sudo touch /var/lib/containerd/io.containerd.snapshotter.v1.devmapper/meta
+        sudo truncate -s 1G /var/lib/containerd/io.containerd.snapshotter.v1.devmapper/meta
 
-        DATA_DEV=$(sudo losetup --find --show /var/lib/containerd/devmapper/data)
-        META_DEV=$(sudo losetup --find --show /var/lib/containerd/devmapper/meta)
+        DATA_DEV=$(sudo losetup --find --show /var/lib/containerd/io.containerd.snapshotter.v1.devmapper/data)
+        META_DEV=$(sudo losetup --find --show /var/lib/containerd/io.containerd.snapshotter.v1.devmapper/meta)
 
         DATA_SIZE="$(sudo blockdev --getsize64 -q ${DATA_DEV})"
         LENGTH_IN_SECTORS=$((DATA_SIZE / 512))
@@ -83,9 +83,11 @@
         line_number=$(grep -n 'io.containerd.snapshotter.v1.devmapper' "$file_path" | cut -d ":" -f 1)
 
         sudo sed -i "$((line_number + 1)) c\    pool_name = \"devpool\"" "$file_path"
-        sudo sed -i "$((line_number + 2)) c\    root_path = \"/var/lib/containerd/devmapper\"" "$file_path"
+        sudo sed -i "$((line_number + 2)) c\    root_path = \"/var/lib/containerd/io.containerd.snapshotter.v1.devmapper\"" "$file_path"
         sudo sed -i "$((line_number + 3)) c\    base_image_size = \"1GB\"" "$file_path"
         sudo sed -i "$((line_number + 4)) c\    discard_blocks = true" "$file_path"
+
+        sudo sed -i 's/snapshotter = "overlayfs"/snapshotter = "devmapper"/g' "$file_path"
 
         sudo systemctl restart containerd
 
