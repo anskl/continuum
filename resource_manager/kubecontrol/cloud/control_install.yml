@@ -199,7 +199,7 @@
         handler: kata-fc
         EOF
 
-    - name: Apply RuntimeClass
+    - name: Apply kata-fc RuntimeClass
       command: >
         kubectl apply -f "/home/{{ username }}/kata-fc-rc.yaml"
 
@@ -213,37 +213,37 @@
         handler: kata
         EOF
 
-    - name: Apply RuntimeClass
+    - name: Apply kata RuntimeClass
       command: >
         kubectl apply -f "/home/{{ username }}/kata-rc.yaml"
 
-    - name: Create k8s kata nxing example
-      shell: |
-        cat > "/home/{{ username }}/nginx-kata.yaml" <<EOF
-        apiVersion: v1
-        kind: Pod
-        metadata:
-          name: nginx-kata
-        spec:
-          runtimeClassName: kata
-          containers:
-          - name: nginx
-            image: nginx
-        EOF
+    # - name: Create k8s kata nxing example
+    #   shell: |
+    #     cat > "/home/{{ username }}/nginx-kata.yaml" <<EOF
+    #     apiVersion: v1
+    #     kind: Pod
+    #     metadata:
+    #       name: nginx-kata
+    #     spec:
+    #       runtimeClassName: kata
+    #       containers:
+    #       - name: nginx
+    #         image: nginx
+    #     EOF
 
-    - name: Create k8s kata-fc nxing example
-      shell: |
-        cat > "/home/{{ username }}/nginx-kata-fc.yaml" <<EOF
-        apiVersion: v1
-        kind: Pod
-        metadata:
-          name: nginx-kata-fc
-        spec:
-          runtimeClassName: kata-fc
-          containers:
-          - name: nginx
-            image: nginx
-        EOF
+    # - name: Create k8s kata-fc nxing example
+    #   shell: |
+    #     cat > "/home/{{ username }}/nginx-kata-fc.yaml" <<EOF
+    #     apiVersion: v1
+    #     kind: Pod
+    #     metadata:
+    #       name: nginx-kata-fc
+    #     spec:
+    #       runtimeClassName: kata-fc
+    #       containers:
+    #       - name: nginx
+    #         image: nginx
+    #     EOF
 
     - name: Install Kata + firecracker
       shell: |
@@ -280,7 +280,7 @@
         sudo sed -i "$((line_number + 3)) c\    base_image_size = \"1GB\"" "$file_path"
         sudo sed -i "$((line_number + 4)) c\    discard_blocks = true" "$file_path"
 
-        sudo sed -i 's/snapshotter = "overlayfs"/snapshotter = "devmapper"/g' "$file_path"
+        # sudo sed -i 's/snapshotter = "overlayfs"/snapshotter = "devmapper"/g' "$file_path"
 
         sudo systemctl restart containerd
 
