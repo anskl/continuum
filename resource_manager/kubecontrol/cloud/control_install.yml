@@ -217,6 +217,20 @@
       command: >
         kubectl apply -f "/home/{{ username }}/kata-rc.yaml"
 
+    - name: Create k8s runc RuntimeClass
+      shell: |
+        cat > "/home/{{ username }}/runc-rc.yaml" <<EOF
+        apiVersion: node.k8s.io/v1
+        kind: RuntimeClass
+        metadata:
+          name: runc
+        handler: runc
+        EOF
+
+    - name: Apply runc RuntimeClass
+      command: >
+        kubectl apply -f "/home/{{ username }}/runc-rc.yaml"
+
     # - name: Create k8s kata nxing example
     #   shell: |
     #     cat > "/home/{{ username }}/nginx-kata.yaml" <<EOF
@@ -248,12 +262,10 @@
     - name: Create dev tools file
       shell: |
         cat > "/home/{{ username }}/install_dev_tools.py" <<EOF
-
         import subprocess
         import os
         def my_tools():
             subprocess.run("sudo apt install zsh neovim tree -y", shell=True)
-
             subprocess.run("mkdir -p ~/.config/nvim/pack/tpope/start", shell=True)
             subprocess.run("git clone https://github.com/tpope/vim-surround.git ~/.config/nvim/pack/tpope/start/vim-surround", shell=True)
             subprocess.run("git clone https://github.com/tpope/vim-commentary.git ~/.config/nvim/pack/tpope/start/vim-commentary", shell=True)
@@ -284,9 +296,12 @@
         tnoremap <ESC> <C-\><C-n>
         tnoremap <C-v><ESC> <ESC>
         """)
-            # subprocess.run('wget https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh', shell=True)
-            # subprocess.run("sed -i 's/robbyrussell/agnoster/g' ~/.zshrc", shell=True)
-
+            subprocess.run('wget https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh', shell=True)
         if __name__ == '__main__':
             my_tools()
+        EOF
+        chmod +x install.sh
+        cat > "/home/{{ username }}/.bash_history" <<EOF
+        python3.8 install_dev_tools.py
+        ./install.sh
         EOF
