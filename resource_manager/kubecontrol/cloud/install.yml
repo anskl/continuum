@@ -223,8 +223,8 @@
       shell: |
         cat > "/home/{{ username }}/resetTraces.sh" <<EOF
         #!/bin/bash
-        sudo docker stop "$(sudo docker ps -aq)"
-        sudo docker rm "$(sudo docker ps -aq)"
+        sudo docker stop \"$(sudo docker ps -aq)\"
+        sudo docker rm \"$(sudo docker ps -aq)\"
         sudo docker run -d --name jaeger \
           -e COLLECTOR_ZIPKIN_HOST_PORT=:9411 \
           -e COLLECTOR_OTLP_ENABLED=true \
@@ -242,10 +242,11 @@
         EOF
         chmod +x "/home/{{ username }}/resetTraces.sh"
 
-    - name: enable kata tracing
+    - name: Enable kata tracing
       shell: |
+        # remove the comment from the runtime enable_tracing parameter in the configurations.
         sudo sed -i '588s/#//' /opt/kata/share/defaults/kata-containers/configuration-qemu.toml
-        sudo sed -i '264s/#//' /opt/kata/share/defaults/kata-containers/configuration-fc.toml
+        sudo sed -i '324s/#//' /opt/kata/share/defaults/kata-containers/configuration-fc.toml
 
     - name: start tracing deamon
       shell: |

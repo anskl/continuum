@@ -306,3 +306,84 @@ def kube_control(config, machines):
         worker_output=worker_output,
         worker_description=worker_description,
     )
+
+    for ip in config['cloud_ips']:
+        get_kata_timestamps(ip)
+
+
+def get_kata_timestamps(ip):
+    # import os
+    # import subprocess
+    # import json
+    import requests
+    from statistics import mean
+
+    jaeger_api_url = f"http://{ip}:16686/api/traces?service=kata&operation=rootSpan"
+    response = requests.get(jaeger_api_url)
+    response_data = response.json()
+
+    # output_dir = "trace_data"
+    # subprocess.run("rm -rf trace_data/*", shell=True)
+    # os.makedirs(output_dir, exist_ok=True)
+
+    # The cache worker should be skipped
+    # -> is the first one to be started
+    cache_worker_traceID = sorted(
+        [span for trace in response_data["data"] for span in trace["spans"] if span["operationName"] == "rootSpan"],
+        key=lambda x: x["startTime"],
+    )[0]["traceID"]
+
+    print("----------------------------------------------------------------------------------------")
+    print("----------------------------------------------------------------------------------------")
+    print('DRY RUN get_kata_timestamps')
+
+    files_n = 0
+    kata_times = []
+    for trace in response_data["data"]:
+        # print("----------------------------------------------------------------------------------------")
+        traceID = trace["traceID"]
+
+        if traceID == cache_worker_traceID:
+            continue
+
+        files_n = files_n + 1
+
+        # sort spans in trace based on startTime
+        trace = sorted(trace["spans"], key=lambda x: x["startTime"])
+
+        assert len([span for span in trace if span["operationName"] == "rootSpan"]) == 1, "only one rootspan"
+
+        assert trace[1]["operationName"] == "create"
+
+        kata_time = trace[1]["duration"]
+        kata_times.append(kata_time)
+
+        createSandboxFromConfig_span = [span for span in trace if span["operationName"] == "createSandboxFromConfig"]
+        assert len(createSandboxFromConfig_span) == 1
+        createSandboxFromConfig_span_id = createSandboxFromConfig_span[0]["spanID"]
+        createSandboxFromConfig_span_children = [
+            span
+            for span in trace
+            if span.get("references") and span["references"][0]["spanID"] == createSandboxFromConfig_span_id
+        ]
+
+        assert createSandboxFromConfig_span_children[0]["operationName"] == "createSandbox"
+        assert createSandboxFromConfig_span_children[1]["operationName"] == "createNetwork"
+        assert createSandboxFromConfig_span_children[2]["operationName"] == "startVM"
+        assert createSandboxFromConfig_span_children[3]["operationName"] == "ttrpc.GetGuestDetails"
+        assert createSandboxFromConfig_span_children[4]["operationName"] == "createContainers"
+
+        print(f"   Kata took in total        -> {trace[1]['duration']:>{10},} μs")
+        print(f"1. createSandbox             -> {createSandboxFromConfig_span_children[0]['duration']:>{10},} μs")
+        print(f"2. createNetwork             -> {createSandboxFromConfig_span_children[1]['duration']:>{10},} μs")
+        print(f"3. startVM                   -> {createSandboxFromConfig_span_children[2]['duration']:>{10},} μs")
+        print(f"4. createContainers          -> {createSandboxFromConfig_span_children[4]['duration']:>{10},} μs")
+
+        print("------------------------------------------------------------------------")
+
+        # trace_filename = os.path.join(output_dir, f"trace_{trace[0]['startTime']}_{traceID}.json")
+        # with open(trace_filename, "w") as f:
+        #     json.dump(trace, f, indent=2)
+
+    print(f"checked {files_n} files")
+    print(f"average time (excluding cache worker) -> {mean(kata_times):,} μs (10^-6s)")
