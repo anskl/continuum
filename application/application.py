@@ -307,8 +307,9 @@ def kube_control(config, machines):
         worker_description=worker_description,
     )
 
-    for ip in config['cloud_ips']:
-        get_kata_timestamps(ip)
+    if "kata" in config["benchmark"]["runtime"]:
+        for ip in config['cloud_ips']:
+            get_kata_timestamps(ip)
 
 
 def get_kata_timestamps(ip):
