@@ -338,7 +338,12 @@ def get_kata_timestamps(ip):
     print('DRY RUN get_kata_timestamps')
 
     files_n = 0
-    kata_times = []
+    kata_t = []
+    createSandbox_t = []
+    createNetwork_t = []
+    startVM_t = []
+    createContainers_t = []
+
     for trace in response_data["data"]:
         # print("----------------------------------------------------------------------------------------")
         traceID = trace["traceID"]
@@ -352,11 +357,7 @@ def get_kata_timestamps(ip):
         trace = sorted(trace["spans"], key=lambda x: x["startTime"])
 
         assert len([span for span in trace if span["operationName"] == "rootSpan"]) == 1, "only one rootspan"
-
         assert trace[1]["operationName"] == "create"
-
-        kata_time = trace[1]["duration"]
-        kata_times.append(kata_time)
 
         createSandboxFromConfig_span = [span for span in trace if span["operationName"] == "createSandboxFromConfig"]
         assert len(createSandboxFromConfig_span) == 1
@@ -370,14 +371,21 @@ def get_kata_timestamps(ip):
         assert createSandboxFromConfig_span_children[0]["operationName"] == "createSandbox"
         assert createSandboxFromConfig_span_children[1]["operationName"] == "createNetwork"
         assert createSandboxFromConfig_span_children[2]["operationName"] == "startVM"
-        assert createSandboxFromConfig_span_children[3]["operationName"] == "ttrpc.GetGuestDetails"
+        # assert createSandboxFromConfig_span_children[3]["operationName"] == "ttrpc.GetGuestDetails"
         assert createSandboxFromConfig_span_children[4]["operationName"] == "createContainers"
 
-        print(f"   Kata took in total        -> {trace[1]['duration']:>{10},} μs")
-        print(f"1. createSandbox             -> {createSandboxFromConfig_span_children[0]['duration']:>{10},} μs")
-        print(f"2. createNetwork             -> {createSandboxFromConfig_span_children[1]['duration']:>{10},} μs")
-        print(f"3. startVM                   -> {createSandboxFromConfig_span_children[2]['duration']:>{10},} μs")
-        print(f"4. createContainers          -> {createSandboxFromConfig_span_children[4]['duration']:>{10},} μs")
+        kata_t.append(trace[1]["duration"])
+        createSandbox_t.append(createSandboxFromConfig_span_children[0]['duration'])
+        createNetwork_t.append(createSandboxFromConfig_span_children[1]['duration'])
+        startVM_t.append(createSandboxFromConfig_span_children[2]['duration'])
+        createContainers_t.append(createSandboxFromConfig_span_children[4]['duration'])
+
+        print(f"traceID ->            {traceID}")
+        print(f"   Kata took in total          -> {trace[1]['duration']:>{13},} μs")
+        print(f"1. createSandbox               -> {createSandbox_t[-1]:>{13},} μs")
+        print(f"2. createNetwork               -> {createNetwork_t[-1]:>{13},} μs")
+        print(f"3. startVM                     -> {startVM_t[-1]:>{13},} μs")
+        print(f"4. createContainers            -> {createContainers_t[-1]:>{13},} μs")
 
         print("------------------------------------------------------------------------")
 
@@ -386,4 +394,8 @@ def get_kata_timestamps(ip):
         #     json.dump(trace, f, indent=2)
 
     print(f"checked {files_n} files")
-    print(f"average time (excluding cache worker) -> {mean(kata_times):,} μs (10^-6s)")
+    print(f"average total kata time        -> {int(mean(kata_t)):>{13},} μs (10^-6s)")
+    print(f"average createSandbox time     -> {int(mean(createSandbox_t)):>{13},} μs (10^-6s)")
+    print(f"average createNetwork time     -> {int(mean(createNetwork_t)):>{13},} μs (10^-6s)")
+    print(f"average startVM time           -> {int(mean(startVM_t)):>{13},} μs (10^-6s)")
+    print(f"average createContaienrs time  -> {int(mean(createContainers_t)):>{13},} μs (10^-6s)")
