@@ -15,7 +15,7 @@
             metadata:
               name: {{ app_name }}
             spec:
-              runtimeClassName: kata-fc
+              runtimeClassName: {{ runtime }}
               containers:
               - name: {{ app_name }}
                 image: {{ image }}

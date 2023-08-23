@@ -203,19 +203,19 @@
       command: >
         kubectl apply -f "/home/{{ username }}/kata-fc-rc.yaml"
 
-    - name: Create k8s kata RuntimeClass
+    - name: Create k8s kata-qemu RuntimeClass
       shell: |
-        cat > "/home/{{ username }}/kata-rc.yaml" <<EOF
+        cat > "/home/{{ username }}/kata-qemu-rc.yaml" <<EOF
         apiVersion: node.k8s.io/v1
         kind: RuntimeClass
         metadata:
-          name: kata
-        handler: kata
+          name: kata-qemu
+        handler: kata-qemu
         EOF
 
     - name: Apply kata RuntimeClass
       command: >
-        kubectl apply -f "/home/{{ username }}/kata-rc.yaml"
+        kubectl apply -f "/home/{{ username }}/kata-qemu-rc.yaml"
 
     - name: Create k8s runc RuntimeClass
       shell: |
