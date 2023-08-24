@@ -84,8 +84,8 @@
       shell: |
         cat > "/home/{{ username }}/resetTraces.sh" <<EOF
         #!/bin/bash
-        sudo docker stop \"$(sudo docker ps -aq)\"
-        sudo docker rm \"$(sudo docker ps -aq)\"
+        sudo docker stop "\$(sudo docker ps -aq)"
+        sudo docker rm "\$(sudo docker ps -aq)"
         sudo docker run -d --name jaeger \
           -e COLLECTOR_ZIPKIN_HOST_PORT=:9411 \
           -e COLLECTOR_OTLP_ENABLED=true \

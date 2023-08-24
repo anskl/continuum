@@ -1,0 +1,15 @@
+# average times
+# p1 -> creating the kata runtime
+# p2 -> creating and connecting to the VM (qemu/fc)
+# p3 -> launching the container inside the vm
+--------------------------------------------------------------------------------
+|    |   5 instances kata-fc |   10 instances kata-fc | 20 instances kata-qemu |
+| p1 |            128,491 μs |             145,073 μs |             162,577 μs |
+| p2 |          1,547,713 μs |           2,635,754 μs |           3,070,144 μs |
+| p3 |            702,350 μs |           1,287,908 μs |           4,799,939 μs |
+--------------------------------------------------------------------------------
+|    | 5 instances kata-qemu | 10 instances kata-qemu | 20 instances kata-qemu |
+| p1 |            235,539 μs |             316,305 μs |             560,691 μs |
+| p2 |          1,929,891 μs |           4,045,090 μs |           8,398,009 μs |
+| p3 |            711,807 μs |             990,761 μs |           2,347,364 μs |
+--------------------------------------------------------------------------------

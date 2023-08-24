@@ -313,19 +313,26 @@ def kube_control(config, machines):
 
 
 def get_kata_timestamps(ip):
-    # import os
-    # import subprocess
-    # import json
     import requests
     from statistics import mean
+
+    class KataStats:
+        def __init__(self, traceID=0, p1_t=0, p2_t=0, p3_t=0):
+            self.traceID = traceID
+            self.p1_t = p1_t
+            self.p2_t = p2_t
+            self.p3_t = p3_t
+
+        def print(self):
+            print(f"TraceID: {self.traceID}")
+            print(f"rootspan to 1st startVM      -> {self.p1_t:>{10},} μs")
+            print(f"(create vm++)                -> {self.p2_t:>{10},} μs")
+            print(f"(create container++)         -> {self.p3_t:>{10},} μs")
+
 
     jaeger_api_url = f"http://{ip}:16686/api/traces?service=kata&operation=rootSpan"
     response = requests.get(jaeger_api_url)
     response_data = response.json()
-
-    # output_dir = "trace_data"
-    # subprocess.run("rm -rf trace_data/*", shell=True)
-    # os.makedirs(output_dir, exist_ok=True)
 
     # The cache worker should be skipped
     # -> is the first one to be started
@@ -336,19 +343,14 @@ def get_kata_timestamps(ip):
 
     print("----------------------------------------------------------------------------------------")
     print("----------------------------------------------------------------------------------------")
-    print('DRY RUN get_kata_timestamps')
+    print('get_kata_timestamps')
 
     files_n = 0
-    kata_t = []
-    createSandbox_t = []
-    createNetwork_t = []
-    startVM_t = []
-    createContainers_t = []
+    kata_times = []
 
     for trace in response_data["data"]:
         # print("----------------------------------------------------------------------------------------")
         traceID = trace["traceID"]
-
         if traceID == cache_worker_traceID:
             continue
 
@@ -357,46 +359,31 @@ def get_kata_timestamps(ip):
         # sort spans in trace based on startTime
         trace = sorted(trace["spans"], key=lambda x: x["startTime"])
 
-        assert len([span for span in trace if span["operationName"] == "rootSpan"]) == 1, "only one rootspan"
-        assert trace[1]["operationName"] == "create"
-
-        createSandboxFromConfig_span = [span for span in trace if span["operationName"] == "createSandboxFromConfig"]
-        assert len(createSandboxFromConfig_span) == 1
-        createSandboxFromConfig_span_id = createSandboxFromConfig_span[0]["spanID"]
-        createSandboxFromConfig_span_children = [
-            span
-            for span in trace
-            if span.get("references") and span["references"][0]["spanID"] == createSandboxFromConfig_span_id
+        # (assuming sorted)
+        # 0. rootSpanId
+        # 1. (first) startVM
+        # 2. createContainers
+        # 3. (second) ttrpc.StartContainer
+        indexes = [
+            0,
+            [i for i, span in enumerate(trace) if span["operationName"] == "startVM"][0],
+            next((i for i, d in enumerate(trace) if d["operationName"] == "createContainers"), None),
+            [i for i, span in enumerate(trace) if span["operationName"] == "ttrpc.StartContainer"][-1],
         ]
-
-        assert createSandboxFromConfig_span_children[0]["operationName"] == "createSandbox"
-        assert createSandboxFromConfig_span_children[1]["operationName"] == "createNetwork"
-        assert createSandboxFromConfig_span_children[2]["operationName"] == "startVM"
-        # assert createSandboxFromConfig_span_children[3]["operationName"] == "ttrpc.GetGuestDetails"
-        assert createSandboxFromConfig_span_children[4]["operationName"] == "createContainers"
-
-        kata_t.append(trace[1]["duration"])
-        createSandbox_t.append(createSandboxFromConfig_span_children[0]['duration'])
-        createNetwork_t.append(createSandboxFromConfig_span_children[1]['duration'])
-        startVM_t.append(createSandboxFromConfig_span_children[2]['duration'])
-        createContainers_t.append(createSandboxFromConfig_span_children[4]['duration'])
-
-        print(f"traceID ->            {traceID}")
-        print(f"   Kata took in total          -> {trace[1]['duration']:>{13},} μs")
-        print(f"1. createSandbox               -> {createSandbox_t[-1]:>{13},} μs")
-        print(f"2. createNetwork               -> {createNetwork_t[-1]:>{13},} μs")
-        print(f"3. startVM                     -> {startVM_t[-1]:>{13},} μs")
-        print(f"4. createContainers            -> {createContainers_t[-1]:>{13},} μs")
-
-        print("------------------------------------------------------------------------")
-
-        # trace_filename = os.path.join(output_dir, f"trace_{trace[0]['startTime']}_{traceID}.json")
-        # with open(trace_filename, "w") as f:
-        #     json.dump(trace, f, indent=2)
+        ts = [span["startTime"] for i, span in enumerate(trace) if i in indexes]
+        kata_times.append(KataStats(traceID, p1_t=(ts[1] - ts[0]), p2_t=(ts[2] - ts[1]), p3_t=(ts[3] - ts[2])))
 
     print(f"checked {files_n} files")
-    print(f"average total kata time        -> {int(mean(kata_t)):>{13},} μs (10^-6s)")
-    print(f"average createSandbox time     -> {int(mean(createSandbox_t)):>{13},} μs (10^-6s)")
-    print(f"average createNetwork time     -> {int(mean(createNetwork_t)):>{13},} μs (10^-6s)")
-    print(f"average startVM time           -> {int(mean(startVM_t)):>{13},} μs (10^-6s)")
-    print(f"average createContaienrs time  -> {int(mean(createContainers_t)):>{13},} μs (10^-6s)")
+
+    for k in kata_times:
+        print("----------------------------------------------")
+        k.print()
+
+    avg_p1_t = int(mean([ks.p1_t for ks in kata_times]))
+    avg_p2_t = int(mean([ks.p2_t for ks in kata_times]))
+    avg_p3_t = int(mean([ks.p3_t for ks in kata_times]))
+
+    print("\nmean_kata_times")
+    print(f"avg_p1_t                     -> {avg_p1_t:>{10},} μs")
+    print(f"avg_p2_t                     -> {avg_p2_t:>{10},} μs")
+    print(f"avg_p3_t                     -> {avg_p3_t:>{10},} μs")
