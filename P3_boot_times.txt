@@ -3,7 +3,7 @@
 # p2 -> creating and connecting to the VM (qemu/fc)
 # p3 -> launching the container inside the vm
 --------------------------------------------------------------------------------
-|    |   5 instances kata-fc |   10 instances kata-fc | 20 instances kata-qemu |
+|    |   5 instances kata-fc |   10 instances kata-fc |   20 instances kata-fc |
 | p1 |            128,491 μs |             145,073 μs |             162,577 μs |
 | p2 |          1,547,713 μs |           2,635,754 μs |           3,070,144 μs |
 | p3 |            702,350 μs |           1,287,908 μs |           4,799,939 μs |
