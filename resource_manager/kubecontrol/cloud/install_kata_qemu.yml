@@ -23,14 +23,19 @@
 
         sudo systemctl restart containerd
 
-    - name: Install tracing tools
-      shell: |
-        sudo snap install docker
-
     - name: Enable kata tracing
       shell: |
         # removes the comment from the runtime enable_tracing parameter in the configurations.
         sudo sed -i '588s/#//' /opt/kata/share/defaults/kata-containers/configuration-qemu.toml
+
+    - name: Install tracing tools
+      command: sudo snap install docker
+
+    - name: Ensure Docker service is started
+      service:
+        name: snap.docker.dockerd.service
+        state: started
+        enabled: yes
 
     - name: start tracing daemon
       shell: |
