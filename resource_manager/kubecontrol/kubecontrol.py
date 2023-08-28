@@ -87,6 +87,17 @@ def start(config, machines):
             ),
         ]
     )
+    commands.append(
+        [
+            "ansible-playbook",
+            "-i",
+            os.path.join(config["infrastructure"]["base_path"], ".continuum/inventory_vms"),
+            os.path.join(
+                config["infrastructure"]["base_path"],
+                ".continuum/cloud/install_kata_dev_tools.yml",
+            ),
+        ]
+    )
 
     # Setup worker
     commands.append(
@@ -124,6 +135,29 @@ def start(config, machines):
                 os.path.join(
                     config["infrastructure"]["base_path"],
                     ".continuum/%s/install_kata_fc.yml" % (config["mode"]),
+                ),
+            ]
+        )
+    if 'kata' in runtime:
+        commands.append(
+            [
+                "ansible-playbook",
+                "-i",
+                os.path.join(config["infrastructure"]["base_path"], ".continuum/inventory_vms"),
+                os.path.join(
+                    config["infrastructure"]["base_path"],
+                    ".continuum/%s/install_kata_cloud_common.yml" % (config["mode"]),
+                ),
+            ]
+        )
+        commands.append(
+            [
+                "ansible-playbook",
+                "-i",
+                os.path.join(config["infrastructure"]["base_path"], ".continuum/inventory_vms"),
+                os.path.join(
+                    config["infrastructure"]["base_path"],
+                    ".continuum/cloud/install_kata_dev_tools.yml",
                 ),
             ]
         )
