@@ -7,3 +7,4 @@ id_rsa*
 *.tf
 .tmp
 logs/
+configuration/experiment_kata/*.txt
