@@ -185,7 +185,7 @@ def schedule_pin(config, machines):
         logging.error(
             """\
 Not all VMs or containers fit on the available hardware.
-Please request less cloud / edge / endpoints nodes, 
+Please request less cloud / edge / endpoints nodes,
 less cores per VM / container or add more hardware
 using the --file option"""
         )
@@ -479,10 +479,10 @@ def docker_registry(config, machines):
             logging.error("Continuum supports Kubernetes v1.[23-27].0, not: %s", version)
 
         images_kube = [
-            "redplanet00/kube-proxy:" + version,
-            "redplanet00/kube-controller-manager:" + version,
-            "redplanet00/kube-scheduler:" + version,
-            "redplanet00/kube-apiserver:" + version,
+            # "redplanet00/kube-proxy:" + version,
+            # "redplanet00/kube-controller-manager:" + version,
+            # "redplanet00/kube-scheduler:" + version,
+            # "redplanet00/kube-apiserver:" + version,
             "redplanet00/etcd:" + etcd,
             "redplanet00/pause:" + pause,
         ]
@@ -571,8 +571,8 @@ def docker_pull(config, machines, base_names):
                 ):
                     logging.warning(
                         """\
-        File /etc/docker/daemon.json does not exist, or is empty on machine %s. 
-        This will most likely prevent the machine from pulling endpoint docker images 
+        File /etc/docker/daemon.json does not exist, or is empty on machine %s.
+        This will most likely prevent the machine from pulling endpoint docker images
         from the private Docker registry running on the main machine %s.
         Please create this file on machine %s with content: { "insecure-registries":["%s"] }
         Followed by a restart of Docker: systemctl restart docker""",
