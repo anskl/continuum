@@ -29,3 +29,78 @@
                   value: "{{ sleep_time }}"
               restartPolicy: Never
         EOF
+        cat > "/home/{{ username }}/job-template-kata-fc.yaml" <<EOF
+        apiVersion: batch/v1
+        kind: Job
+        metadata:
+          name: empty-kata-fc
+        spec:
+          parallelism: {{ replicas }}
+          template:
+            metadata:
+              name: empty-kata-fc
+            spec:
+              runtimeClassName: kata-fc
+              containers:
+              - name: {{ app_name }}
+                image: {{ image }}
+                imagePullPolicy: {{ pull_policy }}
+                resources:
+                  requests:
+                    memory: "{{ memory_req }}Mi"
+                    cpu: {{ cpu_req }}
+                env:
+                - name: SLEEP_TIME
+                  value: "600"
+              restartPolicy: Never
+        EOF
+        cat > "/home/{{ username }}/job-template-kata-qemu.yaml" <<EOF
+        apiVersion: batch/v1
+        kind: Job
+        metadata:
+          name: empty-kata-qemu
+        spec:
+          parallelism: {{ replicas }}
+          template:
+            metadata:
+              name: empty-kata-qemu
+            spec:
+              runtimeClassName: kata-qemu
+              containers:
+              - name: {{ app_name }}
+                image: {{ image }}
+                imagePullPolicy: {{ pull_policy }}
+                resources:
+                  requests:
+                    memory: "{{ memory_req }}Mi"
+                    cpu: {{ cpu_req }}
+                env:
+                - name: SLEEP_TIME
+                  value: "600"
+              restartPolicy: Never
+        EOF
+        cat > "/home/{{ username }}/job-template-runc.yaml" <<EOF
+        apiVersion: batch/v1
+        kind: Job
+        metadata:
+          name: empty-runc
+        spec:
+          parallelism: {{ replicas }}
+          template:
+            metadata:
+              name: empty-runc
+            spec:
+              runtimeClassName: runc
+              containers:
+              - name: {{ app_name }}
+                image: {{ image }}
+                imagePullPolicy: {{ pull_policy }}
+                resources:
+                  requests:
+                    memory: "{{ memory_req }}Mi"
+                    cpu: {{ cpu_req }}
+                env:
+                - name: SLEEP_TIME
+                  value: "600"
+              restartPolicy: Never
+        EOF

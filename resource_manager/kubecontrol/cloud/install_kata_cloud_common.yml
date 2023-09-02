@@ -29,24 +29,100 @@
           jaegertracing/all-in-one:1.47 --query.max-clock-skew-adjustment=20s
 
     - name: create resetTracesFile
-      shell: |
-        cat > "/home/{{ username }}/resetTraces.sh" <<EOF
-        #!/bin/bash
-        sudo docker stop "\$(sudo docker ps -aq)"
-        sudo docker rm "\$(sudo docker ps -aq)"
-        sudo docker run -d --name jaeger \
-          -e COLLECTOR_ZIPKIN_HOST_PORT=:9411 \
-          -e COLLECTOR_OTLP_ENABLED=true \
-          -p 6831:6831/udp \
-          -p 6832:6832/udp \
-          -p 5778:5778 \
-          -p 16686:16686 \
-          -p 4317:4317 \
-          -p 4318:4318 \
-          -p 14250:14250 \
-          -p 14268:14268 \
-          -p 14269:14269 \
-          -p 9411:9411 \
-          jaegertracing/all-in-one:1.47 --query.max-clock-skew-adjustment=20s
-        EOF
-        chmod +x "/home/{{ username }}/resetTraces.sh"
+      copy:
+        dest: /home/{{ username }}/resetTraces.sh
+        content: |
+          #!/bin/bash
+          sudo docker stop "$(sudo docker ps -aq)"
+          sudo docker rm "$(sudo docker ps -aq)"
+          sudo docker run -d --name jaeger \
+            -e COLLECTOR_ZIPKIN_HOST_PORT=:9411 \
+            -e COLLECTOR_OTLP_ENABLED=true \
+            -p 6831:6831/udp \
+            -p 6832:6832/udp \
+            -p 5778:5778 \
+            -p 16686:16686 \
+            -p 4317:4317 \
+            -p 4318:4318 \
+            -p 14250:14250 \
+            -p 14268:14268 \
+            -p 14269:14269 \
+            -p 9411:9411 \
+            jaegertracing/all-in-one:1.47 #--query.max-clock-skew-adjustment=20s
+
+    - name: chmod_x resetTraces
+      file:
+        path: /home/{{ username }}/resetTraces.sh
+        mode: 'a+x'
+
+    - name: create mem.sh
+      copy:
+        dest: /home/{{ username }}/mem.sh
+        content: |
+          #!/bin/bash
+          echo "-------------------------------------"
+          free -h
+          echo "--------------------------------------------------------------------------------"
+          cpu_usage=$(top -bn1 | grep "Cpu(s)" | sed "s/.*, *\([0-9.]*\)%* id.*/\1/" | awk '{print 100 - $1"%"}')
+          echo "CPU usage: $cpu_usage"
+
+    - name: chmod_x mem.sh
+      file:
+        path: /home/{{ username }}/mem.sh
+        mode: 'a+x'
+
+    #- name: create mem.sh file
+    #  shell: |
+    #    cat > "/home/{{ username }}/mem.sh" <<EOF
+    #    #!/bin/bash
+    #    cmd_output=\$(ps aux | awk '/containerd-shim-kata/ && !/awk/ {print \$6/1024, \$11}')
+    #    # echo "\$cmd_output"
+    #    num_processes=\$(echo "\$cmd_output" | wc -l)
+    #    avg_memory=\$(echo "\$cmd_output" | awk '{sum+=\$1} END {print (sum/NR) " MB"}')
+    #    max_memory_process=\$(echo "\$cmd_output" | sort -nr | awk 'NR==1 {print \$1}')
+    #    total_memory=$(echo "$cmd_output" | awk '{sum+=$1} END {print sum " MB"}')
+
+    #    echo "Number of processes: \$num_processes"
+    #    echo "Average Memory Usage: \$avg_memory"
+    #    echo "Max Memory Usage: \$max_memory_process"
+    #    echo "Total Memory Usage: \$total_memory"
+    #    echo "-------------------------------------"
+    #    free -h
+    #    echo "--------------------------------------------------------------------------------"
+    #    cpu_usage=\$(top -bn1 | grep "Cpu(s)" | sed "s/.*, *\([0-9.]*\)%* id.*/\1/" | awk '{print 100 - \$1"%"}')
+    #    echo "CPU usage: \$cpu_usage"
+    #    EOF
+    #    chmod +x mem.sh
+
+    #- name: create mem_runc.sh file
+    #  shell: |
+    #    cat > "/home/{{ username }}/mem_runc.sh" <<EOF
+    #    #!/bin/bash
+    #    pids=\$(pstree -p | grep -E 'containerd-shim\([0-9]+\)-\+-\w+\([0-9]+)\$' | awk -F'(' '{print \$2}'| awk -F')' '{print \$1}')
+
+    #    total_mem=0
+    #    max_mem=0
+    #    count=0
+
+    #    # For each PID, get its memory usage
+    #    for pid in \$pids; do
+    #       mem=\$(ps -p \$pid -o rss=)
+    #       total_mem=\$((total_mem + mem))
+    #       if [ "\$mem" -gt "\$max_mem" ]; then
+    #           max_mem=\$mem
+    #       fi
+    #       count=\$((count + 1))
+    #    done
+
+    #    # Convert memory from KB to MB
+    #    avg_mem=\$(echo "scale=2; \$total_mem / 1024 / \$count" | bc)
+    #    max_mem_mb=\$(echo "scale=2; \$max_mem / 1024" | bc)
+
+    #    echo "Runc processes: \$(echo "\$pids" | wc -l)"
+    #    echo "Average Memory: \$avg_mem MB"
+    #    echo "Max Memory: \$max_mem_mb MB"
+    #    echo "Total Memory: \$(echo "scale=2; \$total_mem / 1024" | bc) MB"
+    #    echo "--------------------------------------------------------------------------------"
+    #    cpu_usage=\$(top -bn1 | grep "Cpu(s)" | sed "s/.*, *\([0-9.]*\)%* id.*/\1/" | awk '{print 100 - \$)
+    #    echo "CPU usage: \$cpu_usage"
+    #    EOF

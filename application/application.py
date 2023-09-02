@@ -136,12 +136,8 @@ def baremetal(config, machines):
 
     # Parse output into dicts, and print result
     print_raw_output(config, worker_output, endpoint_output)
-    worker_metrics = config["module"]["application"].gather_worker_metrics(
-        machines, config, worker_output, None
-    )
-    endpoint_metrics = config["module"]["application"].gather_endpoint_metrics(
-        config, endpoint_output, container_names
-    )
+    worker_metrics = config["module"]["application"].gather_worker_metrics(machines, config, worker_output, None)
+    endpoint_metrics = config["module"]["application"].gather_endpoint_metrics(config, endpoint_output, container_names)
     config["module"]["application"].format_output(config, worker_metrics, endpoint_metrics)
 
 
@@ -170,12 +166,8 @@ def mist(config, machines):
 
     # Parse output into dicts, and print result
     print_raw_output(config, worker_output, endpoint_output)
-    worker_metrics = config["module"]["application"].gather_worker_metrics(
-        machines, config, worker_output, None
-    )
-    endpoint_metrics = config["module"]["application"].gather_endpoint_metrics(
-        config, endpoint_output, container_names
-    )
+    worker_metrics = config["module"]["application"].gather_worker_metrics(machines, config, worker_output, None)
+    endpoint_metrics = config["module"]["application"].gather_endpoint_metrics(config, endpoint_output, container_names)
     config["module"]["application"].format_output(config, worker_metrics, endpoint_metrics)
 
 
@@ -199,9 +191,7 @@ def serverless(config, machines):
 
     # Parse output into dicts, and print result
     print_raw_output(config, None, endpoint_output)
-    endpoint_metrics = config["module"]["application"].gather_endpoint_metrics(
-        config, endpoint_output, container_names
-    )
+    endpoint_metrics = config["module"]["application"].gather_endpoint_metrics(config, endpoint_output, container_names)
     config["module"]["application"].format_output(config, None, endpoint_metrics)
 
 
@@ -222,9 +212,7 @@ def endpoint_only(config, machines):
 
     # Parse output into dicts, and print result
     print_raw_output(config, None, endpoint_output)
-    endpoint_metrics = config["module"]["application"].gather_endpoint_metrics(
-        config, endpoint_output, container_names
-    )
+    endpoint_metrics = config["module"]["application"].gather_endpoint_metrics(config, endpoint_output, container_names)
     config["module"]["application"].format_output(config, None, endpoint_metrics)
 
 
@@ -258,12 +246,8 @@ def kube(config, machines):
 
     # Parse output into dicts, and print result
     print_raw_output(config, worker_output, endpoint_output)
-    worker_metrics = config["module"]["application"].gather_worker_metrics(
-        machines, config, worker_output, None
-    )
-    endpoint_metrics = config["module"]["application"].gather_endpoint_metrics(
-        config, endpoint_output, container_names
-    )
+    worker_metrics = config["module"]["application"].gather_worker_metrics(machines, config, worker_output, None)
+    endpoint_metrics = config["module"]["application"].gather_endpoint_metrics(config, endpoint_output, container_names)
     config["module"]["application"].format_output(config, worker_metrics, endpoint_metrics)
 
 
@@ -308,11 +292,12 @@ def kube_control(config, machines):
     )
 
     if "kata" in config["benchmark"]["runtime"]:
-        for ip in config['cloud_ips']:
-            get_kata_timestamps(ip)
+        for ip in config["cloud_ips"]:
+            get_kata_timestamps(ip, worker_output)
 
+def iso_time_to_epoch(s): return int(str.replace(f"{datetime.fromisoformat(s[:26] + s[-6:]).timestamp()}", ".", ""))
 
-def get_kata_timestamps(ip):
+def get_kata_timestamps(ip, worker_output):
     import requests
     from statistics import mean
 
@@ -329,7 +314,6 @@ def get_kata_timestamps(ip):
             print(f"(create vm++)                -> {self.p2_t:>{10},} μs")
             print(f"(create container++)         -> {self.p3_t:>{10},} μs")
 
-
     jaeger_api_url = f"http://{ip}:16686/api/traces?service=kata&operation=rootSpan"
     response = requests.get(jaeger_api_url)
     response_data = response.json()
@@ -343,47 +327,49 @@ def get_kata_timestamps(ip):
 
     print("----------------------------------------------------------------------------------------")
     print("----------------------------------------------------------------------------------------")
-    print('get_kata_timestamps')
+    print("get_kata_timestamps")
 
+    sorted_start_app = sorted([str.split(x[0])[0] for x in worker_output])
+    sorted_start_app_ts = [iso_time_to_epoch(x) for x in sorted_start_app]
     files_n = 0
     kata_times = []
 
-    for trace in response_data["data"]:
-        # print("----------------------------------------------------------------------------------------")
-        traceID = trace["traceID"]
-        if traceID == cache_worker_traceID:
-            continue
+    # for trace in response_data["data"]:
+    #     # print("----------------------------------------------------------------------------------------")
+    #     traceID = trace["traceID"]
+    #     if traceID == cache_worker_traceID:
+    #         continue
 
-        files_n = files_n + 1
+    #     files_n = files_n + 1
 
-        # sort spans in trace based on startTime
-        trace = sorted(trace["spans"], key=lambda x: x["startTime"])
+    #     # sort spans in trace based on startTime
+    #     trace = sorted(trace["spans"], key=lambda x: x["startTime"])
 
-        # (assuming sorted)
-        # 0. rootSpanId
-        # 1. (first) startVM
-        # 2. createContainers
-        # 3. (second) ttrpc.StartContainer
-        indexes = [
-            0,
-            [i for i, span in enumerate(trace) if span["operationName"] == "startVM"][0],
-            next((i for i, d in enumerate(trace) if d["operationName"] == "createContainers"), None),
-            [i for i, span in enumerate(trace) if span["operationName"] == "ttrpc.StartContainer"][-1],
-        ]
-        ts = [span["startTime"] for i, span in enumerate(trace) if i in indexes]
-        kata_times.append(KataStats(traceID, p1_t=(ts[1] - ts[0]), p2_t=(ts[2] - ts[1]), p3_t=(ts[3] - ts[2])))
+    #     # (assuming sorted)
+    #     # 0. rootSpanId
+    #     # 1. (first) startVM
+    #     # 2. createContainers
+    #     # 3. (second) ttrpc.StartContainer
+    #     indexes = [
+    #         0,
+    #         [i for i, span in enumerate(trace) if span["operationName"] == "startVM"][0],
+    #         next((i for i, d in enumerate(trace) if d["operationName"] == "createContainers"), None),
+    #         [i for i, span in enumerate(trace) if span["operationName"] == "ttrpc.StartContainer"][-1],
+    #     ]
+    #     ts = [span["startTime"] for i, span in enumerate(trace) if i in indexes]
+    #     kata_times.append(KataStats(traceID, p1_t=(ts[1] - ts[0]), p2_t=(ts[2] - ts[1]), p3_t=(ts[3] - ts[2])))
 
-    print(f"checked {files_n} files")
+    # print(f"checked {files_n} files")
 
-    for k in kata_times:
-        print("----------------------------------------------")
-        k.print()
+    # for k in kata_times:
+    #     print("----------------------------------------------")
+    #     k.print()
 
-    avg_p1_t = int(mean([ks.p1_t for ks in kata_times]))
-    avg_p2_t = int(mean([ks.p2_t for ks in kata_times]))
-    avg_p3_t = int(mean([ks.p3_t for ks in kata_times]))
+    # avg_p1_t = int(mean([ks.p1_t for ks in kata_times]))
+    # avg_p2_t = int(mean([ks.p2_t for ks in kata_times]))
+    # avg_p3_t = int(mean([ks.p3_t for ks in kata_times]))
 
-    print("\nmean_kata_times")
-    print(f"avg_p1_t                     -> {avg_p1_t:>{10},} μs")
-    print(f"avg_p2_t                     -> {avg_p2_t:>{10},} μs")
-    print(f"avg_p3_t                     -> {avg_p3_t:>{10},} μs")
+    # print("\nmean_kata_times")
+    # print(f"avg_p1_t                     -> {avg_p1_t:>{10},} μs")
+    # print(f"avg_p2_t                     -> {avg_p2_t:>{10},} μs")
+    # print(f"avg_p3_t                     -> {avg_p3_t:>{10},} μs")
