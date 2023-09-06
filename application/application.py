@@ -299,8 +299,13 @@ def kube_control(config, machines):
             add_kata_timestamps(ip, worker_output)
 
 
+# --------------------------------------------------------------------------------------
+# Kata stuff
+# --------------------------------------------------------------------------------------
+
+
 def gather_kata_traces(ip: str, port: str = "16686") -> List[List[Dict]]:
-    """Get jaeger endpoint kata-runtime traces sorted on startTime
+    """Get jaeger endpoint kata-runtime traces sorted on `startTime`
 
     Args:
         ip (str): Jaeger endpoint ip
@@ -336,7 +341,7 @@ def get_kata_period_timestamps(traces: List[List[Dict]]) -> List[List]:
         traces (List[List[Dict]]): The list of traces
 
     Returns:
-        List[Tuple[int, int, int]]: A list of lists with the aforementioned periods
+        List[List]: A list of lists with the aforementioned periods
     """
     ts = []
     for trace in traces:
@@ -354,38 +359,42 @@ def get_kata_period_timestamps(traces: List[List[Dict]]) -> List[List]:
 #     return int(str.replace(f"{datetime.fromisoformat(s[:26] + s[-6:]).timestamp()}", ".", ""))
 
 
-def _iso_time_to_epoch_subprocess(date: str) -> int:
+def _iso_time_to_epoch(date: str) -> int:
     cmd = f"date -d '{date}' '+%s%N'"
     out = subprocess.getoutput(cmd)[:-3]
     return int(out)
 
 
-def _adjust_spans(spans: List[Dict], delta: int) -> List[Dict]:
-    return [{k: v + delta if k == "startTime" else v for k, v in span.items()} for span in spans]
+def _adjust_spans(trace: List[Dict], delta: int) -> List[Dict]:
+    """Adjust `startTime` for each span in trace by adding `delta`.
+
+    Args:
+        trace (List[Dict]): A jaeger trace dictionary including `spans`.
+        delta (int): The time to add (μs).
+
+    Returns:
+        List[Dict]: A new trace with adjusted timestamps.
+    """
+    return [{k: v + delta if k == "startTime" else v for k, v in span.items()} for span in trace]
 
 
 def adjust_traces(traces: List[List[Dict]], deltas: List[int]) -> List[List[Dict]]:
+    """Adjust traces based to their corresponding spans.
+
+    Args:
+        traces (List[List[Dict]]): A list of jaeger traces.
+        deltas (List[int]): A list of deltas.
+
+    Returns:
+        List[List[Dict]]: New list of traces but with adjusted timespans.
+    """
     assert len(traces) == len(deltas)
     return [_adjust_spans(trace, delta) for (trace, delta) in zip(traces, deltas)]
 
 
-def add_kata_timestamps(ip, worker_output):
-    print("----------------------------------------------------------------------------------------")
-    print("----------------------------------------------------------------------------------------")
-    print(f"add_kata_timestamps({ip})")
-
-    # skip cache worker
-    traces = gather_kata_traces(ip)[1:]
-    timestamps = get_kata_period_timestamps(traces)
-
-    sorted_start_app = [str.split(wo[0])[0] for wo in worker_output]
-    sorted_start_app_ts = sorted([_iso_time_to_epoch_subprocess(o) for o in sorted_start_app])
-    print(sorted_start_app)
-    print(sorted_start_app_ts)
-
-    # map every worker's output to it's span - might not be in order
-    diff_maps = [{} for _ in range(len(sorted_start_app_ts))]
-    for ts_i, ts in enumerate(sorted_start_app_ts):
+def get_span_worker_deltas(traces: List[List[Dict]], wo: List[int]) -> List[int]:
+    diff_maps = [{} for _ in range(len(wo))]
+    for ts_i, ts in enumerate(wo):
         diff = float("inf")
         for trace_i, trace in enumerate(traces):
             for span_i, span in enumerate(trace):
@@ -395,21 +404,40 @@ def add_kata_timestamps(ip, worker_output):
                     diff_maps[ts_i] = {
                         "diff": d,
                         "trace_id": trace_i,
-                        "span_id": span_i,
+                        "span_i": span_i,
                         "operation": span["operationName"],
                     }
 
+    logging.debug("------------------------------------")
+    logging.debug("for each worker's start print timestamp, print the closest span in the whole trace list")
     for i, x in enumerate(diff_maps):
-        print(f"i -> {i}")
-        print(f"\t{x}")
+        logging.debug(f"i -> {i}")
+        logging.debug(f"\t{x}")
+    logging.debug("------------------------------------")
 
     deltas = [0] * len(diff_maps)
     for d in diff_maps:
         deltas[d["trace_id"]] = d["diff"]
 
+    return deltas
+
+
+def add_kata_timestamps(ip, worker_output):
+    print("----------------------------------------------------------------------------------------")
+    print("----------------------------------------------------------------------------------------")
+    print(f"add_kata_timestamps({ip})")
+
+    # skip cache worker (is the first one since gather_kata_traces sorts output)
+    traces = gather_kata_traces(ip)[1:]
+    kata_periods = get_kata_period_timestamps(traces)
+
+    worker_output_start = [str.split(wo[0])[0] for wo in worker_output]
+    worker_output_start_epoch_sorted = sorted([_iso_time_to_epoch(o) for o in worker_output_start])
+    print(worker_output_start)
+    print("--> converted to -->")
+    print(worker_output_start_epoch_sorted)
+
+    # map every worker's output to it's span - might not be in order
+    deltas = get_span_worker_deltas(traces, worker_output_start_epoch_sorted)
+
     adjusted_traces = adjust_traces(traces, deltas)
-
-    adjusted_periods = get_kata_period_timestamps(adjusted_traces)
-
-    files_n = 0
-    kata_times = []

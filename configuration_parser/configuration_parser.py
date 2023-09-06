@@ -159,7 +159,7 @@ def add_constants(parser, config):
         except socket.gaierror as e:
             parser.error("Could not get host ip with error: %s", e)
 
-        config["registry"] = host_ip + ":5002"
+        config["registry"] = host_ip + ":5003"
 
 
 def option_check(
