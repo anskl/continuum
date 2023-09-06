@@ -112,6 +112,7 @@ def format_output(
     starttime=None,
     worker_output=None,
     worker_description=None,
+    kata_ts=None
 ):
     """Format processed output to provide useful insights (empty)
 
