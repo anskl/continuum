@@ -4,13 +4,16 @@ Mostly used for calling specific application code
 """
 
 import logging
+import subprocess
 import sys
-
 from datetime import datetime
+from typing import Dict, List
 
-from resource_manager.kubernetes import kubernetes
-from resource_manager.endpoint import endpoint
+import requests
+
 from execution_model.openfaas import openfaas
+from resource_manager.endpoint import endpoint
+from resource_manager.kubernetes import kubernetes
 
 
 def set_container_location(config):
@@ -293,83 +296,120 @@ def kube_control(config, machines):
 
     if "kata" in config["benchmark"]["runtime"]:
         for ip in config["cloud_ips"]:
-            get_kata_timestamps(ip, worker_output)
+            add_kata_timestamps(ip, worker_output)
 
-def iso_time_to_epoch(s): return int(str.replace(f"{datetime.fromisoformat(s[:26] + s[-6:]).timestamp()}", ".", ""))
 
-def get_kata_timestamps(ip, worker_output):
-    import requests
-    from statistics import mean
+def gather_kata_traces(ip: str, port: str = "16686") -> List[List[Dict]]:
+    """Get jaeger endpoint kata-runtime traces sorted on startTime
 
-    class KataStats:
-        def __init__(self, traceID=0, p1_t=0, p2_t=0, p3_t=0):
-            self.traceID = traceID
-            self.p1_t = p1_t
-            self.p2_t = p2_t
-            self.p3_t = p3_t
+    Args:
+        ip (str): Jaeger endpoint ip
+        port (str): Jaeger endpoint port. Defaults to "16686"
 
-        def print(self):
-            print(f"TraceID: {self.traceID}")
-            print(f"rootspan to 1st startVM      -> {self.p1_t:>{10},} μs")
-            print(f"(create vm++)                -> {self.p2_t:>{10},} μs")
-            print(f"(create container++)         -> {self.p3_t:>{10},} μs")
-
-    jaeger_api_url = f"http://{ip}:16686/api/traces?service=kata&operation=rootSpan"
+    Returns:
+        List[Dict]: A sorted list of traces based on startTime, each sorted by their rootSpans' startTime
+    """
+    jaeger_api_url = f"http://{ip}:{port}/api/traces?service=kata&operation=rootSpan"
     response = requests.get(jaeger_api_url)
     response_data = response.json()
 
-    # The cache worker should be skipped
-    # -> is the first one to be started
-    cache_worker_traceID = sorted(
-        [span for trace in response_data["data"] for span in trace["spans"] if span["operationName"] == "rootSpan"],
-        key=lambda x: x["startTime"],
-    )[0]["traceID"]
+    traces = response_data["data"]
 
+    # Sort each trace's spans based on starTime and sort traces based on startTime
+    traces = sorted(
+        [sorted(trace["spans"], key=lambda x: x["startTime"]) for trace in traces],
+        key=lambda x: x[0]["startTime"],
+    )
+
+    print(f"gather_kata_traces({ip}, {port}) -> got {len(traces)} traces")
+    return traces
+
+
+def get_kata_period_timestamps(traces: List[List[Dict]]) -> List[List]:
+    """For each of the traces, find the periods we are interested in, as below:
+    (assuming sorted)
+    1. (first) startVM
+    2. createContainers
+    3. (second) ttrpc.StartContainer
+
+    Args:
+        traces (List[List[Dict]]): The list of traces
+
+    Returns:
+        List[Tuple[int, int, int]]: A list of lists with the aforementioned periods
+    """
+    ts = []
+    for trace in traces:
+        ixs = [
+            [i for i, span in enumerate(trace) if span["operationName"] == "startVM"][0],
+            next((i for i, d in enumerate(trace) if d["operationName"] == "createContainers"), None),
+            [i for i, span in enumerate(trace) if span["operationName"] == "ttrpc.StartContainer"][-1],
+        ]
+        ts.append([trace[i]["startTime"] for i in ixs])
+    return ts
+
+
+# FIXME: For some numbers (investigate), returns smaller length output and breaks logic
+# def iso_time_to_epoch(s):
+#     return int(str.replace(f"{datetime.fromisoformat(s[:26] + s[-6:]).timestamp()}", ".", ""))
+
+
+def _iso_time_to_epoch_subprocess(date: str) -> int:
+    cmd = f"date -d '{date}' '+%s%N'"
+    out = subprocess.getoutput(cmd)[:-3]
+    return int(out)
+
+
+def _adjust_spans(spans: List[Dict], delta: int) -> List[Dict]:
+    return [{k: v + delta if k == "startTime" else v for k, v in span.items()} for span in spans]
+
+
+def adjust_traces(traces: List[List[Dict]], deltas: List[int]) -> List[List[Dict]]:
+    assert len(traces) == len(deltas)
+    return [_adjust_spans(trace, delta) for (trace, delta) in zip(traces, deltas)]
+
+
+def add_kata_timestamps(ip, worker_output):
     print("----------------------------------------------------------------------------------------")
     print("----------------------------------------------------------------------------------------")
-    print("get_kata_timestamps")
+    print(f"add_kata_timestamps({ip})")
 
-    sorted_start_app = sorted([str.split(x[0])[0] for x in worker_output])
-    sorted_start_app_ts = [iso_time_to_epoch(x) for x in sorted_start_app]
+    # skip cache worker
+    traces = gather_kata_traces(ip)[1:]
+    timestamps = get_kata_period_timestamps(traces)
+
+    sorted_start_app = [str.split(wo[0])[0] for wo in worker_output]
+    sorted_start_app_ts = sorted([_iso_time_to_epoch_subprocess(o) for o in sorted_start_app])
+    print(sorted_start_app)
+    print(sorted_start_app_ts)
+
+    # map every worker's output to it's span - might not be in order
+    diff_maps = [{} for _ in range(len(sorted_start_app_ts))]
+    for ts_i, ts in enumerate(sorted_start_app_ts):
+        diff = float("inf")
+        for trace_i, trace in enumerate(traces):
+            for span_i, span in enumerate(trace):
+                d = ts - span["startTime"]
+                if abs(d) < diff:
+                    diff = abs(d)
+                    diff_maps[ts_i] = {
+                        "diff": d,
+                        "trace_id": trace_i,
+                        "span_id": span_i,
+                        "operation": span["operationName"],
+                    }
+
+    for i, x in enumerate(diff_maps):
+        print(f"i -> {i}")
+        print(f"\t{x}")
+
+    deltas = [0] * len(diff_maps)
+    for d in diff_maps:
+        deltas[d["trace_id"]] = d["diff"]
+
+    adjusted_traces = adjust_traces(traces, deltas)
+
+    adjusted_periods = get_kata_period_timestamps(adjusted_traces)
+
     files_n = 0
     kata_times = []
-
-    # for trace in response_data["data"]:
-    #     # print("----------------------------------------------------------------------------------------")
-    #     traceID = trace["traceID"]
-    #     if traceID == cache_worker_traceID:
-    #         continue
-
-    #     files_n = files_n + 1
-
-    #     # sort spans in trace based on startTime
-    #     trace = sorted(trace["spans"], key=lambda x: x["startTime"])
-
-    #     # (assuming sorted)
-    #     # 0. rootSpanId
-    #     # 1. (first) startVM
-    #     # 2. createContainers
-    #     # 3. (second) ttrpc.StartContainer
-    #     indexes = [
-    #         0,
-    #         [i for i, span in enumerate(trace) if span["operationName"] == "startVM"][0],
-    #         next((i for i, d in enumerate(trace) if d["operationName"] == "createContainers"), None),
-    #         [i for i, span in enumerate(trace) if span["operationName"] == "ttrpc.StartContainer"][-1],
-    #     ]
-    #     ts = [span["startTime"] for i, span in enumerate(trace) if i in indexes]
-    #     kata_times.append(KataStats(traceID, p1_t=(ts[1] - ts[0]), p2_t=(ts[2] - ts[1]), p3_t=(ts[3] - ts[2])))
-
-    # print(f"checked {files_n} files")
-
-    # for k in kata_times:
-    #     print("----------------------------------------------")
-    #     k.print()
-
-    # avg_p1_t = int(mean([ks.p1_t for ks in kata_times]))
-    # avg_p2_t = int(mean([ks.p2_t for ks in kata_times]))
-    # avg_p3_t = int(mean([ks.p3_t for ks in kata_times]))
-
-    # print("\nmean_kata_times")
-    # print(f"avg_p1_t                     -> {avg_p1_t:>{10},} μs")
-    # print(f"avg_p2_t                     -> {avg_p2_t:>{10},} μs")
-    # print(f"avg_p3_t                     -> {avg_p3_t:>{10},} μs")

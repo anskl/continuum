@@ -150,17 +150,6 @@ def start(config, machines):
                 ),
             ]
         )
-        commands.append(
-            [
-                "ansible-playbook",
-                "-i",
-                os.path.join(config["infrastructure"]["base_path"], ".continuum/inventory_vms"),
-                os.path.join(
-                    config["infrastructure"]["base_path"],
-                    ".continuum/cloud/install_kata_dev_tools.yml",
-                ),
-            ]
-        )
 
 
     results = machines[0].process(config, commands)
