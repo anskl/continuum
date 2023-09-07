@@ -86,6 +86,8 @@ def start(config, machines):
         logging.debug("Check output for Ansible command [%s]", " ".join(command))
         ansible.check_output((output, error))
 
+    verify_running_cluster(config, machines)
+
     # Install observability packages (Prometheus, Grafana) if configured by the user
     if config["benchmark"]["observability"]:
         command = [
@@ -102,6 +104,53 @@ def start(config, machines):
 
         logging.debug("Check output for Ansible command [%s]", " ".join(command))
         ansible.check_output((output, error))
+
+
+def verify_running_cluster(config, machines):
+    """Verify that all nodes in the cluster have status Ready
+    If not, either wait until they are ready or stop the framework
+
+    Args:
+        config (dict): Parsed configuration
+        machines (list(Machine object)): List of machine objects representing physical machines
+    """
+    logging.info("Verify if all nodes in the cluster are connected")
+
+    pending = True
+    i = 0
+
+    while i < config["infrastructure"]["cloud_nodes"] + config["infrastructure"]["edge_nodes"]:
+        # Get the list of nodes
+        if pending:
+            command = ["kubectl", "get", "nodes"]
+            output, error = machines[0].process(config, command, ssh=config["cloud_ssh"][0])[0]
+
+            if (error and not all("[CONTINUUM]" in l for l in error)) or not output:
+                logging.error("".join(error))
+                sys.exit()
+
+            # The first couple of lines may have custom prints, skip
+            offset = 0
+            for offset, o in enumerate(output):
+                if "NAME" in o and "STATUS" in o:
+                    break
+
+        # Find the status
+        line = output[i + 1 + offset].rstrip().split(" ")
+        line = [s for s in line if s != ""]
+        node = line[0]
+        status = line[1]
+
+        # Check status of node
+        if status == "Ready":
+            i += 1
+            pending = False
+        elif status == "NotReady":
+            time.sleep(5)
+            pending = True
+        else:
+            logging.error("[ERROR] Node %s has unexpected status %s", node, status)
+            sys.exit()
 
 
 def cache_worker(config, machines, app_vars):
@@ -163,7 +212,10 @@ def cache_worker(config, machines, app_vars):
     ):
         # Option "call" launches one kubectl command per job file
         file = "/home/%s/jobs" % (machines[0].cloud_controller_names[0])
-        command = "/home/%s/exec.sh" % (machines[0].cloud_controller_names[0])
+        command = "for filename in /home/%s/jobs/*; do kubectl apply -f \$filename & done" % (
+            machines[0].cloud_controller_names[0]
+        )
+        command = '"%s"' % (command)
     else:
         file = "/home/%s/job-template.yaml" % (machines[0].cloud_controller_names[0])
         command = "kubectl apply -f %s" % (file)
@@ -172,6 +224,7 @@ def cache_worker(config, machines, app_vars):
 
     if not output or not any("job.batch" in o and "created" in o for o in output):
         logging.error("Could not deploy pods: %s", "".join(output))
+        logging.error("With error: %s", "".join(error))
         sys.exit()
     if error and not all("[CONTINUUM]" in l for l in error):
         logging.error("Could not deploy pods: %s", "".join(error))
@@ -265,9 +318,9 @@ def start_worker(config, machines, app_vars, get_starttime=False):
         return start_worker_baremetal(config, machines, app_vars)
 
     # For non-mist/baremetal deployments
-    starttime = start_worker_kube(config, machines, app_vars, get_starttime)
+    starttime, kubectl_output = start_worker_kube(config, machines, app_vars, get_starttime)
     status = wait_worker_ready(config, machines, get_starttime)
-    return starttime, status
+    return starttime, kubectl_output, status
 
 
 def wait_worker_ready(config, machines, get_starttime):
@@ -281,14 +334,24 @@ def wait_worker_ready(config, machines, get_starttime):
     Returns (optional):
         (list(dict)): Status of all pods every second
     """
-    if config["mode"] == "cloud":
-        worker_apps = (config["infrastructure"]["cloud_nodes"] - 1) * config["benchmark"][
-            "applications_per_worker"
-        ]
-    elif config["mode"] == "edge":
-        worker_apps = (
-            config["infrastructure"]["edge_nodes"] * config["benchmark"]["applications_per_worker"]
-        )
+    # Determine number of workers
+    # In container mode, all applications are gathered in 1 pod, so we only have 1 worker
+    if (
+        "kube_deployment" in config["benchmark"]
+        and config["benchmark"]["kube_deployment"] == "container"
+    ):
+        worker_apps = 1
+    else:
+        # Otherwise, we have 1 pod per application
+        if config["mode"] == "cloud":
+            worker_apps = (config["infrastructure"]["cloud_nodes"] - 1) * config["benchmark"][
+                "applications_per_worker"
+            ]
+        elif config["mode"] == "edge":
+            worker_apps = (
+                config["infrastructure"]["edge_nodes"]
+                * config["benchmark"]["applications_per_worker"]
+            )
 
     status = []
     while True:
@@ -304,7 +367,7 @@ def wait_worker_ready(config, machines, get_starttime):
         start_t = float(output[0])
         output = output[1:]
 
-        # Not all pods are yet shown in the 'kubectl get pods' command
+        # No pods are yet shown in the 'kubectl get pods' command
         if error and any("couldn't find any field with path" in line for line in error):
             continue
 
@@ -347,7 +410,7 @@ def wait_worker_ready(config, machines, get_starttime):
             app_name = l[0]
             app_status = l[-1]
 
-            if app_status in ["Failed", "Unknown"]:
+            if app_status in ["Failed", "Unknown", "ErrImageNeverPull"]:
                 logging.error(
                     'Container on cloud/edge %s has status %s, expected "Pending" or "Running"',
                     app_name,
@@ -357,17 +420,17 @@ def wait_worker_ready(config, machines, get_starttime):
 
             status_entry[app_status] += 1
 
-        total = (
+        pods_in_system = (
             status_entry["Pending"]
             + status_entry["Running"]
             + status_entry["Succeeded"]
             + status_entry["ContainerCreating"]
         )
-        status_entry["Arriving"] = worker_apps - total
+        status_entry["Arriving"] = worker_apps - pods_in_system
         status.append(status_entry)
 
-        # Stop if all statuses are running
-        if status_entry["Running"] == total:
+        # Stop if all statuses are running or succeeded
+        if status_entry["Running"] + status_entry["Succeeded"] == worker_apps:
             break
 
     if get_starttime:
@@ -408,8 +471,10 @@ def launch_with_starttime(config, machines):
         and config["benchmark"]["kube_deployment"] == "call"
     ):
         # Option "call" launches one kubectl command per job file
-        file = "/home/%s/jobs" % (machines[0].cloud_controller_names[0])
-        command = "/home/%s/exec.sh" % (machines[0].cloud_controller_names[0])
+        command = "for filename in /home/%s/jobs/*; do kubectl apply -f \$filename & done" % (
+            machines[0].cloud_controller_names[0]
+        )
+        command = "\"date +'%%s.%%N'; %s\"" % (command)
     else:
         file = "/home/%s/job-template.yaml" % (machines[0].cloud_controller_names[0])
         command = "kubectl apply -f %s" % (file)
@@ -421,12 +486,79 @@ def launch_with_starttime(config, machines):
     if len(output) < 2 or not any("created" in o for o in output):
         logging.error("Could not deploy pods: %s", "".join(output))
         sys.exit()
+
+    # At least one [continuum] statement should be in the error log
+    # But, do check if any real error statement is there
     if error and not all("[CONTINUUM]" in l for l in error):
         logging.error("Could not deploy pods: %s", "".join(error))
         sys.exit()
+    elif error and not any("[CONTINUUM]" in l for l in error):
+        logging.error("Could not deploy pods, expected custom [CONTINUUM] logs: %s", "".join(error))
+        sys.exit()
+
+    # Parse all kubectl output and put it in a flat list
+    kubectl_output = []
+    for e in error:
+        if "[CONTINUUM]" in e:
+            time_obj, line = parse_custom_kubernetes_splits(e)
+            if time_obj is False:
+                logging.debug("Couldn't properly parse line: %s", line)
+                continue
+
+            kubectl_output.append([time_obj, line])
+
+    # Only print "0401" has a job= string attached. We want this job= attached to a 0400
+    # and a 0402 as well for ordering later. The entire list of 0400/0401/0402 is already
+    # ordered by time so we just iterate over this to make it work
+    # This is not perfect, but we cant add a job= to 0400 and 0402 int he source code of k8s
+    kubectl_output_updated = []
+    i = 0
+
+    # Get a list of all 0400 and 0402
+    start_list = [entry for entry in kubectl_output if "0400" in entry[1]]
+    end_list = [entry for entry in kubectl_output if "0402" in entry[1]]
+
+    # The number of 0400/0402 statements should be the same.
+    # Every time you start kubectl (0400) you need to end it (0401)
+    if len(start_list) != len(end_list):
+        logging.error(
+            "There are more kubectl-start statements than kubectl-end statement - should be equal"
+        )
+        sys.exit()
+
+    # The number of kubectl sends (0401) compared to the number of 0400/0402's depends on how many
+    # files you passed to kubectl in one go. In our case, this is 1 for all cases (so an equal
+    # number of 0400/0401/0402 prints) except if kube_deployment == file because then we pass
+    # multiple files at once so we have many sends. To counter this, we duplicate 0400/0402's.
+    send_length = len([entry for entry in kubectl_output if "0401" in entry[1]])
+    if len(start_list) != send_length:
+        if len(start_list) == 1 and config["benchmark"]["kube_deployment"] == "file":
+            start_list *= send_length
+            end_list *= send_length
+        else:
+            logging.error("The number of 0400/0402 statements != the number of 0401 statements")
+            sys.exit()
+
+    for time_obj, line in kubectl_output:
+        if "0401" in line:
+            kubectl_output_updated.append([time_obj, line])
+
+            # Get the job= part from the line
+            job_string = line.split("0401")[1]
+
+            t_obj_start, l_start = start_list[i]
+            t_obj_end, l_end = end_list[i]
+
+            l_start += job_string
+            l_end += job_string
+
+            kubectl_output_updated.append([t_obj_start, l_start])
+            kubectl_output_updated.append([t_obj_end, l_end])
+
+            i += 1
 
     starttime = float(output[0])
-    return starttime
+    return starttime, kubectl_output_updated
 
 
 def start_worker_kube(config, machines, app_vars, get_starttime):
@@ -822,12 +954,13 @@ def get_worker_output_kube(config, machines, get_description):
 
     # Gather commands to get logs
     commands = []
+    pods = []
     for line in output[1 + offset :]:
         # Some custom output may appear afterwards - ignore
         if "CONTINUUM" in line:
             break
 
-        container = line.split(" ")[0]
+        pod = line.split(" ")[0]
 
         # Check if there is only 1 container per pod or multiple - requires different approach
         # We treat every container as an entity - no matter if there are multiple in a pod
@@ -850,19 +983,21 @@ def get_worker_output_kube(config, machines, get_description):
         # Loop through every sub-container in the single pod
         if get_description:
             # Will be identical between containers - per pod level
-            command = ["kubectl", "get", "pod", container, "-o", "yaml"]
+            command = ["kubectl", "get", "pod", pod, "-o", "yaml"]
             for _ in range(sub_pods):
                 commands.append(command)
+                pods.append(pod)
         else:
             for i in range(1, sub_pods + 1):
                 # Sub-pods-mode requires the name of the container to be appended
                 if sub_pods_mode:
-                    container_long = container + " empty-%i" % (i)
+                    container = pod + " empty-%i" % (i)
                 else:
-                    container_long = container
+                    container = pod
 
-                command = ["kubectl", "logs", "--timestamps=true", container_long]
+                command = ["kubectl", "logs", "--timestamps=true", container]
                 commands.append(command)
+                pods.append(container)
 
     # Append commands into 1 big command
     big_command = '"'
@@ -883,13 +1018,24 @@ def get_worker_output_kube(config, machines, get_description):
         logging.error("Container %i: %s", i, "".join(error))
         sys.exit()
 
+    logging.debug("Assign output to correct pod/container")
+
     # Split based on custom delimiter, and group output per pod
     worker_output = []
     entry = []
+    i = 0
     for line in output:
         line = line.rstrip()
         if "DELIMITER01234" in line:
-            worker_output.append(entry)
+            if get_description:
+                e = entry
+            else:
+                # For worker output, you need to know to what pod it is related
+                # We dont/cant distinct between containers, but assume correct ordering
+                e = [pods[i], entry]
+                i += 1
+
+            worker_output.append(e)
             entry = []
         else:
             entry.append(line)
@@ -1018,22 +1164,11 @@ def get_control_output(config, machines, starttime, status):
             if comp not in parsed[name]:
                 parsed[name][comp] = []
 
-            # For each line, get timestamp and unique print
-            line_split = line.split(" ")
-
-            try:
-                index = line_split.index("[CONTINUUM]")
-
-                # Example: "%!s(int64=1679583342891810186)"
-                time_str = line_split[index - 1]
-                time_str = time_str.split("=")[1][:-1]
-                time_obj_nano = float(time_str)
-                time_obj = time_obj_nano / 10**9
-            except Exception as e:
-                logging.debug("[WARNING][%s] Could not parse line: %s", str(e), line)
+            time_obj, line = parse_custom_kubernetes_splits(line)
+            if time_obj is False:
+                logging.debug("Couldn't properly parse line: %s", line)
                 continue
 
-            line = line.split("[CONTINUUM] ")[1]
             parsed[name][comp].append([time_obj, line])
 
     # Now filter out everything before starttime and after endtime
@@ -1059,3 +1194,35 @@ def get_control_output(config, machines, starttime, status):
                     parsed_copy[node][component].append(entry)
 
     return parsed_copy
+
+
+def parse_custom_kubernetes_splits(line):
+    """Parse lines from Kubernetes custom output, like:
+    I0824 22:23:21.269974    5026 kubectl.go:32] %!s(int64=1692908601269961032) [CONTINUUM] 0400\n
+
+    To: 1692908601.269961032, 0400
+
+    Args:
+        line (str): Line to parse
+
+    Returns:
+        (float, str): timestamp, output line
+    """
+    # For each line, get timestamp and unique print
+    line = line.strip()
+    line_split = line.split(" ")
+
+    try:
+        index = line_split.index("[CONTINUUM]")
+
+        # Example: "%!s(int64=1679583342891810186)"
+        time_str = line_split[index - 1]
+        time_str = time_str.split("=")[1][:-1]
+        time_obj_nano = float(time_str)
+        time_obj = time_obj_nano / 10**9
+    except Exception as e:
+        logging.debug("[WARNING][%s] Could not parse line: %s", str(e), line)
+        return False, False
+
+    line = line.split("[CONTINUUM] ")[1]
+    return time_obj, line

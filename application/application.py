@@ -81,7 +81,7 @@ def print_raw_output(config, worker_output, endpoint_output):
         logging.debug("------------------------------------")
         logging.debug("%s OUTPUT", config["mode"].upper())
         logging.debug("------------------------------------")
-        for out in worker_output:
+        for _, out in worker_output:
             for line in out:
                 logging.debug(line)
 
@@ -268,7 +268,9 @@ def kube_control(config, machines):
 
     # Start the worker
     app_vars = config["module"]["application"].start_worker(config, machines)
-    starttime, status = kubernetes.start_worker(config, machines, app_vars, get_starttime=True)
+    starttime, kubectl_out, status = kubernetes.start_worker(
+        config, machines, app_vars, get_starttime=True
+    )
 
     # Wait for benchmark to finish
     kubernetes.wait_worker_completion(config, machines)
@@ -280,6 +282,10 @@ def kube_control(config, machines):
     worker_description = kubernetes.get_worker_output(config, machines, get_description=True)
 
     control_output = kubernetes.get_control_output(config, machines, starttime, status)
+
+    # Add kubectl output
+    node = config["cloud_ssh"][0].split("@")[0]
+    control_output[node]["kubectl"] = kubectl_out
 
     kata_ts = None
     if "kata" in config["benchmark"]["runtime"]:

@@ -7,4 +7,8 @@ id_rsa*
 *.tf
 .tmp
 logs/
+*package-lock.json
+*node_modules
+scripts/*.csv
+scripts/*.pdf
 configuration/experiment_kata/*.txt

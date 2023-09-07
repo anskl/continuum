@@ -13,10 +13,12 @@ import logging
 import time
 
 from application import application
-from configuration_parser import configuration_parser
 from execution_model import execution_model
 from infrastructure import infrastructure
 from resource_manager import resource_manager
+
+# pylint: disable-next=redefined-builtin
+from input import input
 
 
 def make_wide(formatter, w=120, h=36):
@@ -46,6 +48,9 @@ def set_logging(args):
 
     Args:
         args (Namespace): Argparse object
+
+    Returns:
+        (timestamp): Timestamp of the log file, used for all saved files
     """
     # Log to file parameters
     log_dir = "logs"
@@ -89,6 +94,7 @@ def set_logging(args):
     )
 
     logging.info("Logging has been enabled. Writing to stdout and file %s/%s", log_dir, log_name)
+    return t
 
 
 def main(args):
@@ -140,15 +146,16 @@ if __name__ == "__main__":
 
     parser_obj.add_argument(
         "config",
-        type=lambda x: configuration_parser.start(parser_obj, x),
+        type=lambda x: input.start(parser_obj, x),
         help="benchmark config file",
     )
     parser_obj.add_argument("-v", "--verbose", action="store_true", help="increase verbosity level")
 
     arguments = parser_obj.parse_args()
 
-    # Set loggers, print current config
-    set_logging(arguments)
-    configuration_parser.print_config(arguments.config)
+    timestamp = set_logging(arguments)
+    arguments.config["timestamp"] = timestamp
+
+    input.print_input(arguments.config)
 
     main(arguments)
