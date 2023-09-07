@@ -1,16 +1,15 @@
 """Manage the empty application"""
 
+import copy
 import logging
 import sys
-import copy
 import time
-
 from datetime import datetime
-
-import pandas as pd
+from typing import List
 
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
+import pandas as pd
 from matplotlib.ticker import MaxNLocator
 
 
@@ -112,7 +111,7 @@ def format_output(
     starttime=None,
     worker_output=None,
     worker_description=None,
-    kata_ts=None
+    kata_ts=None,
 ):
     """Format processed output to provide useful insights (empty)
 
@@ -124,18 +123,17 @@ def format_output(
         starttime (datetime, optional): Invocation time of kubectl apply command
         worker_output (list(list(str)), optional): Output of each container ran on the edge
         worker_description (list(list(str)), optional): Extensive description of each container
+        kata_ts (list(list(int)), optional): kata period timestamps we are interested in
     """
     # Plot the status of each pod over time
     if status is not None:
         plot_status(status)
 
         if control is not None:
-            worker_metrics = fill_control(
-                config, control, starttime, worker_output, worker_description
-            )
-            df = print_control(config, worker_metrics)
+            worker_metrics = fill_control(config, control, starttime, worker_output, worker_description, kata_ts)
+            df = print_control(config, worker_metrics, kata_ts)
             plot_control(df)
-            plot_p56(df)
+            plot_p56(df, kata_ts)
 
 
 def plot_status(status):
@@ -313,9 +311,7 @@ def check(
 
     i = 0
     for node, output in control.items():
-        if (controlplane_node in node and is_controlplane) or (
-            controlplane_node not in node and not is_controlplane
-        ):
+        if (controlplane_node in node and is_controlplane) or (controlplane_node not in node and not is_controlplane):
             for component, out in output.items():
                 if component == sub_component:
                     for t, line in out:
@@ -372,7 +368,7 @@ def check(
             i += 1
 
 
-def fill_control(config, control, starttime, worker_output, worker_description):
+def fill_control(config, control, starttime, worker_output, worker_description, kata_ts=None):
     """Gather all data/timestamps on control plane activities
     1. Kubectl apply                  -> starttime
     2. Scheduling queue               -> 0124
@@ -536,7 +532,7 @@ def fill_control(config, control, starttime, worker_output, worker_description):
     return worker_metrics
 
 
-def print_control(config, worker_metrics):
+def print_control(config, worker_metrics, kata_ts=None):
     """Print controlplane data from the source code
 
     Args:
@@ -693,7 +689,7 @@ def plot_control(df):
     plt.savefig("./logs/%s_breakdown_intern.pdf" % (t), bbox_inches="tight")
 
 
-def plot_p56(df):
+def plot_p56(df, kata_ts: List[List[int]]):
     """Plot controlplane data from the source code
 
     Phases:
@@ -741,6 +737,9 @@ def plot_p56(df):
         inplace=True,
     )
     df_plot = df_plot.sort_values(by=["P6_started_app (s)"])
+
+    #  * 1e-6
+    kata = [[t * 1e-6 for t in l] for l in kata_ts]
 
     y = [*range(len(df_plot["P5_started_pod (s)"]))]
 

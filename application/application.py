@@ -447,4 +447,9 @@ def get_kata_timestamps(ip: str, worker_output) -> List[List[int]]:
 
     assert all( x == adjusted_traces[i][kata_p_ix[i][2]]["startTime"] for i, x in enumerate(worker_output_start_epoch_sorted)), "adjusted correctly"
 
-    return get_kata_period_timestamps(adjusted_traces)[1]
+    kata_timestamps = get_kata_period_timestamps(adjusted_traces)[1]
+    logging.debug("------------------------------------")
+    logging.debug("kata timestamps")
+    logging.debug(kata_timestamps)
+    logging.debug("------------------------------------")
+    return kata_timestamps
