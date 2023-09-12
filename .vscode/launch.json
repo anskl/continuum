@@ -5,14 +5,24 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "kubecontrol empty",
+            "name": "kubecontrol kata-qemu",
             "type": "python",
             "request": "launch",
-            "args": ["-v","configuration/empty_antonis.cfg"],
+            "args": ["configuration/experiment_control/microbenchmark/qemu/constant_total_pods/node_1_kata_qemu.cfg"],
             "program": "continuum.py",
             "console": "integratedTerminal",
             "justMyCode": true,
             "sudo": false
-        }
+        },
+        {
+            "name": "5 kata-fc",
+            "type": "python",
+            "request": "launch",
+            "args": ["configuration/empty_antonis.cfg"],
+            "program": "continuum.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "sudo": false
+        },
     ]
 }

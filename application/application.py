@@ -7,6 +7,7 @@ import logging
 import subprocess
 import sys
 from datetime import datetime
+from statistics import mean
 from typing import Dict, List, Tuple
 
 import requests
@@ -268,9 +269,7 @@ def kube_control(config, machines):
 
     # Start the worker
     app_vars = config["module"]["application"].start_worker(config, machines)
-    starttime, kubectl_out, status = kubernetes.start_worker(
-        config, machines, app_vars, get_starttime=True
-    )
+    starttime, kubectl_out, status = kubernetes.start_worker(config, machines, app_vars, get_starttime=True)
 
     # Wait for benchmark to finish
     kubernetes.wait_worker_completion(config, machines)
@@ -287,10 +286,12 @@ def kube_control(config, machines):
     node = config["cloud_ssh"][0].split("@")[0]
     control_output[node]["kubectl"] = kubectl_out
 
-    kata_ts = None
-    if "kata" in config["benchmark"]["runtime"]:
-        for ip in config["cloud_ips"]:
-            kata_ts = get_kata_timestamps(ip, worker_output)
+    kata_traces = get_kata_timestamps(config, worker_output)
+
+    # kata_ts = []
+    # if "kata" in config["benchmark"]["runtime"]:
+    #     for ip in config["cloud_ips"]:
+    #         kata_ts.append(get_kata_timestamps(ip, worker_output))
 
     # Parse output into dicts, and print result
     print_raw_output(config, worker_output, [])
@@ -303,7 +304,7 @@ def kube_control(config, machines):
         starttime=starttime,
         worker_output=worker_output,
         worker_description=worker_description,
-        kata_ts=kata_ts
+        # kata_ts=[a for b in kata_ts for a in b] if kata_ts is not None else None,
     )
 
 
@@ -312,17 +313,17 @@ def kube_control(config, machines):
 # --------------------------------------------------------------------------------------
 
 
-def gather_kata_traces(ip: str, port: str = "16686") -> List[List[Dict]]:
-    """Get jaeger endpoint kata-runtime traces sorted on `startTime`
+def _gather_kata_traces(ip: str, port: str = "16686") -> List[List[Dict]]:
+    """(internal) curl request to jaeger server on `ip` to get the traces produced by the kata runtime.
 
     Args:
         ip (str): Jaeger endpoint ip
-        port (str): Jaeger endpoint port. Defaults to "16686"
+        port (str, optional): Jaeger endpoint port. Defaults to "16686".
 
     Returns:
-        List[Dict]: A sorted list of traces based on startTime, each sorted by their rootSpans' startTime
+        List[List[Dict]]: a sorted list of traces for each kata deployment on `ip`.
     """
-    jaeger_api_url = f"http://{ip}:{port}/api/traces?service=kata&operation=rootSpan"
+    jaeger_api_url = f"http://{ip}:{port}/api/traces?service=kata&operation=rootSpan&limit=10000"
     response = requests.get(jaeger_api_url)
     response_data = response.json()
 
@@ -375,7 +376,7 @@ def _iso_time_to_epoch(date: str) -> int:
     return int(out)
 
 
-def _adjust_spans(trace: List[Dict], delta: int) -> List[Dict]:
+def _adjust_spans(spans: List[Dict], delta: int) -> List[Dict]:
     """Adjust `startTime` for each span in trace by adding `delta`.
 
     Args:
@@ -385,10 +386,10 @@ def _adjust_spans(trace: List[Dict], delta: int) -> List[Dict]:
     Returns:
         List[Dict]: A new trace with adjusted timestamps.
     """
-    return [{k: v + delta if k == "startTime" else v for k, v in span.items()} for span in trace]
+    return [{k: v + delta if k == "startTime" else v for k, v in span.items()} for span in spans]
 
 
-def adjust_traces(traces: List[List[Dict]], deltas: List[int]) -> List[List[Dict]]:
+def adjust_traces(traces: List[List[Dict]], deltas: Dict) -> List[List[Dict]]:
     """Adjust traces based to their corresponding spans.
 
     Args:
@@ -399,8 +400,7 @@ def adjust_traces(traces: List[List[Dict]], deltas: List[int]) -> List[List[Dict
         List[List[Dict]]: New list of traces but with adjusted timespans.
     """
     assert len(traces) == len(deltas)
-    return [_adjust_spans(trace, delta) for (trace, delta) in zip(traces, deltas)]
-
+    return [_adjust_spans(trace, deltas[trace[0]["traceID"]]) for trace in traces]
 
 # def get_span_worker_deltas(traces: List[List[Dict]], wo: List[int]) -> List[int]:
 #     diff_maps = [{} for _ in range(len(wo))]
@@ -431,27 +431,68 @@ def adjust_traces(traces: List[List[Dict]], deltas: List[int]) -> List[List[Dict
 
 #     return deltas
 
+def get_deltas_kata(wo: List[int], traces: List[List[Dict]], kata_end_span_ix: List[int]) -> Dict:
+    # span_ID = [trace[ix]["traceID"] for (trace, ix) in zip(traces, kata_end_span_ix)]
+    kata_end_span_startTime = [trace[ix]["startTime"] for (trace, ix) in zip(traces, kata_end_span_ix)]
 
-def get_kata_timestamps(ip: str, worker_output) -> List[List[int]]:
-    print("----------------------------------------------------------------------------------------")
-    print("----------------------------------------------------------------------------------------")
-    print(f"add_kata_timestamps({ip})")
+    pairs = [(a, b) for a in wo for b in kata_end_span_startTime]
+    sorted_pairs = sorted(pairs, key=lambda x: abs(x[0] - x[1]))
 
-    # skip cache worker (is the first one since gather_kata_traces sorts output)
-    traces = gather_kata_traces(ip)[1:]
+    matched = set()
+    min_diff = []
+    for a, b in sorted_pairs:
+        if a not in matched and b not in matched:
+            min_diff.append((a, b))
+            matched.add(a)
+            matched.add(b)
+
+    print("--------------------------------------------------------------------------------")
+    print("adjust_traces_worker_output")
+    print(f"avg diff -> {mean(abs(a-b) for (a,b) in min_diff):>{10},}")
+    print("--------------------------------------------------------------------------------")
+
+    # for r in min_diff:
+    #     print(r)
+    # print("--------------------------------------------------------------------------------")
+
+    deltas = {}
+    for w, span_t in min_diff:
+        trace_id = [a for b in traces for a in b if a["startTime"] == span_t][0]["traceID"]
+        deltas[trace_id] = w - span_t
+
+    return deltas
+
+
+# Kata entry point.
+def get_kata_timestamps(config, worker_output) -> List[List[int]]:
+    logging.info("----------------------------------------------------------------------------------------")
+    logging.info("get_kata_timestamps")
+    logging.info("----------------------------------------------------------------------------------------")
+
+    nodes_names, nodes_ips = map(list, zip(*[str.split(x, "@") for x in config["cloud_ssh"][1:]]))
+
+    # won't use for now
+    # all_nodes_kata_traces = [_gather_kata_traces(ip)[1:] for ip in nodes_ips]
+
+    traces = _gather_kata_traces(nodes_ips[0])[1:]
     kata_p_ix, _ = get_kata_period_timestamps(traces)
 
-    worker_output_start = [str.split(wo[0])[0] for wo in worker_output]
+    worker_output_start = [str.split(wo[1][0])[0] for wo in worker_output]
     worker_output_start_epoch_sorted = sorted([_iso_time_to_epoch(o) for o in worker_output_start])
-    print(worker_output_start)
-    print("--> converted to -->")
-    print(worker_output_start_epoch_sorted)
 
-    deltas = [wo - traces[i][kata_p_ix[i][2]]["startTime"] for i, wo in enumerate(worker_output_start_epoch_sorted)]
+    # logging.debug("------------------------------------")
+    # logging.debug(worker_output_start)
+    # logging.debug("--> converted to -->")
+    # logging.debug(worker_output_start_epoch_sorted)
+    # logging.debug("------------------------------------")
+
+    deltas = get_deltas_kata(worker_output_start_epoch_sorted, traces, [x[-1] for x in kata_p_ix])
 
     adjusted_traces = adjust_traces(traces, deltas)
 
-    assert all( x == adjusted_traces[i][kata_p_ix[i][2]]["startTime"] for i, x in enumerate(worker_output_start_epoch_sorted)), "adjusted correctly"
+    assert all(
+        x == adjusted_traces[i][kata_p_ix[i][2]]["startTime"] for i, x in enumerate(worker_output_start_epoch_sorted)
+    ), "adjusted correctly"
 
     kata_timestamps = get_kata_period_timestamps(adjusted_traces)[1]
     logging.debug("------------------------------------")
