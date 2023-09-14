@@ -286,7 +286,9 @@ def kube_control(config, machines):
     node = config["cloud_ssh"][0].split("@")[0]
     control_output[node]["kubectl"] = kubectl_out
 
-    kata_traces = get_kata_timestamps(config, worker_output)
+    kata_ts = None
+    if "kata" in config["benchmark"]["runtime"]:
+        kata_ts = get_kata_timestamps(config, worker_output)
 
     # kata_ts = []
     # if "kata" in config["benchmark"]["runtime"]:
@@ -304,7 +306,7 @@ def kube_control(config, machines):
         starttime=starttime,
         worker_output=worker_output,
         worker_description=worker_description,
-        # kata_ts=[a for b in kata_ts for a in b] if kata_ts is not None else None,
+        kata_ts=kata_ts if kata_ts is not None else None,
     )
 
 
@@ -344,7 +346,7 @@ def get_kata_period_timestamps(traces: List[List[Dict]]) -> Tuple[List[List[int]
     (assuming sorted)
     1. (first) startVM
     2. createContainers
-    3. (second) ttrpc.StartContainer
+    3. ttrpc.ReadStdout that is at least 1 sec long -> `empty` app specific
 
     Args:
         traces (List[List[Dict]]): The list of traces
@@ -356,9 +358,10 @@ def get_kata_period_timestamps(traces: List[List[Dict]]) -> Tuple[List[List[int]
     ts = []
     for trace in traces:
         ixs = [
+            0,
             [i for i, span in enumerate(trace) if span["operationName"] == "startVM"][0],
             next((i for i, d in enumerate(trace) if d["operationName"] == "createContainers"), None),
-            [i for i, span in enumerate(trace) if span["operationName"] == "ttrpc.StartContainer"][-1],
+            next((i for i, span in enumerate(trace) if span["operationName"] == "ttrpc.ReadStdout" and span["duration"] > 1_000_000), None),
         ]
         ix.append(ixs)
         ts.append([trace[i]["startTime"] for i in ixs])
@@ -402,6 +405,7 @@ def adjust_traces(traces: List[List[Dict]], deltas: Dict) -> List[List[Dict]]:
     assert len(traces) == len(deltas)
     return [_adjust_spans(trace, deltas[trace[0]["traceID"]]) for trace in traces]
 
+
 # def get_span_worker_deltas(traces: List[List[Dict]], wo: List[int]) -> List[int]:
 #     diff_maps = [{} for _ in range(len(wo))]
 #     for ts_i, ts in enumerate(wo):
@@ -430,6 +434,7 @@ def adjust_traces(traces: List[List[Dict]], deltas: Dict) -> List[List[Dict]]:
 #         deltas[d["trace_id"]] = d["diff"]
 
 #     return deltas
+
 
 def get_deltas_kata(wo: List[int], traces: List[List[Dict]], kata_end_span_ix: List[int]) -> Dict:
     # span_ID = [trace[ix]["traceID"] for (trace, ix) in zip(traces, kata_end_span_ix)]
@@ -460,6 +465,9 @@ def get_deltas_kata(wo: List[int], traces: List[List[Dict]], kata_end_span_ix: L
         trace_id = [a for b in traces for a in b if a["startTime"] == span_t][0]["traceID"]
         deltas[trace_id] = w - span_t
 
+    for k, v in deltas.items():
+        print(f"{k} -> {v}")
+
     return deltas
 
 
@@ -471,10 +479,10 @@ def get_kata_timestamps(config, worker_output) -> List[List[int]]:
 
     nodes_names, nodes_ips = map(list, zip(*[str.split(x, "@") for x in config["cloud_ssh"][1:]]))
 
-    # won't use for now
-    # all_nodes_kata_traces = [_gather_kata_traces(ip)[1:] for ip in nodes_ips]
+    traces = [_gather_kata_traces(ip)[1:] for ip in nodes_ips]
+    # Flatten list of lists
+    traces = [a for b in traces for a in b]
 
-    traces = _gather_kata_traces(nodes_ips[0])[1:]
     kata_p_ix, _ = get_kata_period_timestamps(traces)
 
     worker_output_start = [str.split(wo[1][0])[0] for wo in worker_output]
@@ -490,13 +498,29 @@ def get_kata_timestamps(config, worker_output) -> List[List[int]]:
 
     adjusted_traces = adjust_traces(traces, deltas)
 
-    assert all(
-        x == adjusted_traces[i][kata_p_ix[i][2]]["startTime"] for i, x in enumerate(worker_output_start_epoch_sorted)
-    ), "adjusted correctly"
+    # start tests ---------------------------------------------------------------
+    delta_values = set([abs(v) for v in deltas.values()])
 
-    kata_timestamps = get_kata_period_timestamps(adjusted_traces)[1]
-    logging.debug("------------------------------------")
-    logging.debug("kata timestamps")
-    logging.debug(kata_timestamps)
-    logging.debug("------------------------------------")
-    return kata_timestamps
+    s = set()
+    for a, b in zip(adjusted_traces, traces):
+        assert len(a) == len(b)
+        # print(f"doing {a[0]['traceID']} and {b[0]['traceID']}")
+        for i in range(len(a)):
+            s.add(abs(b[i]["startTime"] - a[i]["startTime"]))
+        # print(f"{a[0]['traceID']} diff -> {s}")
+
+    print(f"is True? {delta_values == s}")
+
+    worker_output_list = sorted(list(set(worker_output_start_epoch_sorted)))
+    adjusted_list = []
+    tmp = [x[-1] for x in kata_p_ix]
+    for i, x in enumerate(adjusted_traces):
+        a = adjusted_traces[i][tmp[i]]["startTime"]
+        adjusted_list.append(a)
+
+    adjusted_list = sorted(adjusted_list)
+    print(f"is True? {worker_output_list == adjusted_list}")
+    # end tests ----------------------------------------------------------------
+
+
+    return get_kata_period_timestamps(adjusted_traces)[1]

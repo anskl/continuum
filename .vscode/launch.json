@@ -15,7 +15,7 @@
             "sudo": false
         },
         {
-            "name": "5 kata-fc",
+            "name": "simple kata-fc",
             "type": "python",
             "request": "launch",
             "args": ["configuration/empty_antonis.cfg"],

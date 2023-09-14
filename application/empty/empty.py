@@ -109,6 +109,7 @@ def format_output(
     starttime=None,
     worker_output=None,
     worker_description=None,
+    kata_ts=None
 ):
     """Format processed output to provide useful insights (empty)
 
@@ -133,6 +134,12 @@ def format_output(
             validate_data(df)
             plot.plot_control(df, config["timestamp"])
             plot.plot_p56(df, config["timestamp"])
+            if kata_ts is not None:
+                df_kata = pd.DataFrame(
+                    [[time_delta(t * 1e-6, starttime) for t in l] for l in kata_ts],
+                    columns=["P0", "P1", "P2", "P3"]
+                )
+                plot.plot_kata_only(df_kata, config["timestamp"])
 
 
 def create_control_object(worker_description, mapping):
