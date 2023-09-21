@@ -5,6 +5,7 @@ import sys
 import copy
 
 from datetime import datetime
+from typing import List
 
 import pandas as pd
 
@@ -135,11 +136,48 @@ def format_output(
             plot.plot_control(df, config["timestamp"])
             plot.plot_p56(df, config["timestamp"])
             if kata_ts is not None:
-                df_kata = pd.DataFrame(
-                    [[time_delta(t * 1e-6, starttime) for t in l] for l in kata_ts],
-                    columns=["P0", "P1", "P2", "P3"]
-                )
-                plot.plot_kata_only(df_kata, config["timestamp"])
+                df_kata = get_kata_df(df, kata_ts, starttime)
+                # print(list(df_kata))
+                # df_kata = pd.DataFrame(
+                #     [[time_delta(t * 1e-6, starttime) for t in l] for l in kata_ts],
+                #     columns=["P0", "P1", "P2", "P3"]
+                # )
+
+                df_kata.to_csv(f"./logs/{(config['timestamp'])}_dataframe_kata.csv", index=False, encoding="utf-8")
+                # plot.plot_kata_only(df_kata, config["timestamp"])
+
+def get_kata_df(df: pd.DataFrame, kata_ts: List[List[int]], starttime) -> pd.DataFrame:
+    df_columns = [
+        "kubelet_pod_received (s)",
+        "kubelet_created_cgroup (s)",
+        "kubelet_mounted_volume (s)",
+        "started_application (s)",
+    ]
+
+    df = df[df_columns]
+    kata_ts = sorted(kata_ts, key=lambda x: x[-1])
+    kata_p = [[time_delta(t * 1e-6, starttime) for (i, t) in enumerate(l) if i != 0] for l in kata_ts]
+    kata_p = [list(l) for l in zip(*kata_p)] # pivot to append to df_lists
+
+    kata_columns = [
+        "kata_create_runtime (s)",
+        "kata_create_vm (s)",
+        "kata_connect_to_vm (s)",
+        "kata_create_container_and_launch (s)",
+    ]
+
+    df_lists = [df[col].tolist() for col in df.columns]
+    df_lists = df_lists[:-1] + kata_p + [df_lists[-1]]
+    df_lists = [list(l) for l in zip(*df_lists)]  # pivot for pd.DataFrame
+    df_columns = df_columns[:-1] + kata_columns + [df_columns[-1]]
+
+    df = pd.DataFrame(df_lists, columns=df_columns)
+    l = [sorted(l)==l for l in df_lists]
+    print(f"are all ascending? {all(x > 0 for x in l)}")
+
+    return df
+
+
 
 
 def create_control_object(worker_description, mapping):
