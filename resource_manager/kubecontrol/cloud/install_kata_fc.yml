@@ -12,10 +12,10 @@
         sudo mkdir -p /var/lib/containerd/io.containerd.snapshotter.v1.devmapper
 
         sudo touch /var/lib/containerd/io.containerd.snapshotter.v1.devmapper/data
-        sudo truncate -s 1G /var/lib/containerd/io.containerd.snapshotter.v1.devmapper/data
+        sudo truncate -s 20G /var/lib/containerd/io.containerd.snapshotter.v1.devmapper/data
 
         sudo touch /var/lib/containerd/io.containerd.snapshotter.v1.devmapper/meta
-        sudo truncate -s 1G /var/lib/containerd/io.containerd.snapshotter.v1.devmapper/meta
+        sudo truncate -s 10G /var/lib/containerd/io.containerd.snapshotter.v1.devmapper/meta
 
         DATA_DEV=$(sudo losetup --find --show /var/lib/containerd/io.containerd.snapshotter.v1.devmapper/data)
         META_DEV=$(sudo losetup --find --show /var/lib/containerd/io.containerd.snapshotter.v1.devmapper/meta)
@@ -31,7 +31,7 @@
 
         sudo sed -i "$((line_number + 1)) c\    pool_name = \"devpool\"" "$file_path"
         sudo sed -i "$((line_number + 2)) c\    root_path = \"/var/lib/containerd/io.containerd.snapshotter.v1.devmapper\"" "$file_path"
-        sudo sed -i "$((line_number + 3)) c\    base_image_size = \"1GB\"" "$file_path"
+        sudo sed -i "$((line_number + 3)) c\    base_image_size = \"10GB\"" "$file_path"
         sudo sed -i "$((line_number + 4)) c\    discard_blocks = true" "$file_path"
 
         sudo sed -i 's/snapshotter = "overlayfs"/snapshotter = "devmapper"/g' "$file_path"

@@ -231,3 +231,24 @@
     - name: Apply runc RuntimeClass
       command: >
         kubectl apply -f "/home/{{ username }}/runc-rc.yaml"
+
+    - name: Delete RuntimeClass files
+      file:
+        path: "/home/{{ username }}/{{ item }}"
+        state: absent
+      with_items:
+          - kata-fc.yaml
+          - kata-rc.yaml
+          - runc.yaml
+
+    - name: create watch file
+      copy:
+        dest: /home/{{ username }}/watch.sh
+        content: |
+          #!/bin/bash
+          watch -n1 "kubectl get pods | grep -c Running"
+
+    - name: chmod_x watch
+      file:
+        path: /home/{{ username }}/watch.sh
+        mode: 'a+x'

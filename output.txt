@@ -1,0 +1,1 @@
+kubelet_pod_received (s),kubelet_created_cgroup (s),kubelet_mounted_volume (s),kata_create_runtime (s),kata_create_vm (s),kata_connect_to_vm (s),kata_create_container_and_launch (s),started_application (s)

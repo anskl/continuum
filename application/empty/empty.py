@@ -110,7 +110,7 @@ def format_output(
     starttime=None,
     worker_output=None,
     worker_description=None,
-    kata_ts=None
+    kata_ts=None,
 ):
     """Format processed output to provide useful insights (empty)
 
@@ -128,9 +128,7 @@ def format_output(
         plot.plot_status(status, config["timestamp"])
 
         if control is not None:
-            worker_metrics = fill_control(
-                config, control, starttime, worker_output, worker_description
-            )
+            worker_metrics = fill_control(config, control, starttime, worker_output, worker_description)
             df = print_control(config, worker_metrics)
             validate_data(df)
             plot.plot_control(df, config["timestamp"])
@@ -143,8 +141,21 @@ def format_output(
                 #     columns=["P0", "P1", "P2", "P3"]
                 # )
 
-                df_kata.to_csv(f"./logs/{(config['timestamp'])}_dataframe_kata.csv", index=False, encoding="utf-8")
+                path = f"./logs/{(config['timestamp'])}_dataframe_kata.csv"
+                df_kata.to_csv(path, index=False, encoding="utf-8")
+
+                # tmp start -----------------------------------------------------------
+                import subprocess
+                cmd1 = f"head -n 1 {path}"
+                output = f"{config['benchmark']['runtime']}_{config['infrastructure']['cloud_nodes']-1}_{config['benchmark']['applications_per_worker']}.csv"
+                cmd2 = f"tail -n +2 {path} | tac >> {output}"
+                first_line = subprocess.check_output(cmd1, shell=True).decode('utf-8')
+                with open('output.txt', 'w') as f: f.write(first_line)
+                subprocess.run(cmd2, shell=True)
+                # tmp end -------------------------------------------------------------
+
                 # plot.plot_kata_only(df_kata, config["timestamp"])
+
 
 def get_kata_df(df: pd.DataFrame, kata_ts: List[List[int]], starttime) -> pd.DataFrame:
     df_columns = [
@@ -157,7 +168,7 @@ def get_kata_df(df: pd.DataFrame, kata_ts: List[List[int]], starttime) -> pd.Dat
     df = df[df_columns]
     kata_ts = sorted(kata_ts, key=lambda x: x[-1])
     kata_p = [[time_delta(t * 1e-6, starttime) for (i, t) in enumerate(l) if i != 0] for l in kata_ts]
-    kata_p = [list(l) for l in zip(*kata_p)] # pivot to append to df_lists
+    kata_p = [list(l) for l in zip(*kata_p)]  # pivot to append to df_lists
 
     kata_columns = [
         "kata_create_runtime (s)",
@@ -172,12 +183,10 @@ def get_kata_df(df: pd.DataFrame, kata_ts: List[List[int]], starttime) -> pd.Dat
     df_columns = df_columns[:-1] + kata_columns + [df_columns[-1]]
 
     df = pd.DataFrame(df_lists, columns=df_columns)
-    l = [sorted(l)==l for l in df_lists]
+    l = [sorted(l) == l for l in df_lists]
     print(f"are all ascending? {all(x > 0 for x in l)}")
 
     return df
-
-
 
 
 def create_control_object(worker_description, mapping):
@@ -264,8 +273,7 @@ def sort_on_time(timestamp, worker_metrics, tag, compare_tag, future_compare):
     insertion_time = 100000.0
     for s in sorted_worker_metrics:
         if s[tag] is None and (
-            (future_compare and timestamp < s[compare_tag])
-            or (not future_compare and timestamp > s[compare_tag])
+            (future_compare and timestamp < s[compare_tag]) or (not future_compare and timestamp > s[compare_tag])
         ):
             insertion_time = s[compare_tag]
             break
@@ -335,9 +343,7 @@ def check(
 
     # Investigate either the control plane node or all worker nodes
     for node, output in control.items():
-        if (controlplane_node in node and is_controlplane) or (
-            controlplane_node not in node and not is_controlplane
-        ):
+        if (controlplane_node in node and is_controlplane) or (controlplane_node not in node and not is_controlplane):
             # Get output from a specific component you want to filter
             if component not in output:
                 logging.error("ERROR: component %s not a valid key", component)
@@ -359,8 +365,7 @@ def check(
 
                 # Sort on time cases
                 if component == "apiserver" or (
-                    tag == "5_pod_object_create"
-                    and config["benchmark"]["kube_deployment"] in ["pod", "container"]
+                    tag == "5_pod_object_create" and config["benchmark"]["kube_deployment"] in ["pod", "container"]
                 ):
                     # See comments in next function: insert 5_pod_object_create on 7_scheduler_start
                     timestamp = time_delta(t, starttime)
@@ -379,11 +384,7 @@ def check(
                         container = strip[1]
 
                         for metric in worker_metrics:
-                            if (
-                                metric["pod"] == pod
-                                and metric["container"] == container
-                                and metric[tag] is None
-                            ):
+                            if metric["pod"] == pod and metric["container"] == container and metric[tag] is None:
                                 metric[tag] = time_delta(t, starttime)
                                 i += 1
                     elif "pod=" in line:
@@ -426,9 +427,7 @@ def check(
     if i < len(worker_metrics):
         if (component == "apiserver" or tag == "5_pod_object_create") and i == 1:
             # Only fill up the rest if there was only 1 entry and its the apiserver we're parsing
-            logging.debug(
-                "Parsed output for %i / %i pods. Fill up the rest.", i, len(worker_metrics)
-            )
+            logging.debug("Parsed output for %i / %i pods. Fill up the rest.", i, len(worker_metrics))
 
             # Fill up if there are multiple containers per pod
             if i < len(worker_metrics):
@@ -548,11 +547,7 @@ def fill_control(config, control, starttime, worker_output, worker_description):
                         worker_metrics[i][mapping[-1][2]] = time_delta(end_time, starttime)
                         # You could add a break here and in the end of the next else, but the
                         # code's logic should be robust enough so that it isn't required
-                    elif (
-                        check_container
-                        and metrics["pod"] == pod
-                        and metrics["container"] == container
-                    ):
+                    elif check_container and metrics["pod"] == pod and metrics["container"] == container:
                         worker_metrics[i][mapping[-1][2]] = time_delta(end_time, starttime)
 
     return worker_metrics

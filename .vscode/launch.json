@@ -5,7 +5,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "kubecontrol kata-qemu",
+            "name": "100 instances",
             "type": "python",
             "request": "launch",
             "args": ["configuration/experiment_control/microbenchmark/qemu/constant_total_pods/node_1_kata_qemu.cfg"],
