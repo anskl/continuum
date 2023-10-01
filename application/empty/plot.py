@@ -1,6 +1,9 @@
 """Create plots for the empty application"""
 
 import logging
+import math
+
+import numpy as np
 
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
@@ -71,8 +74,10 @@ def plot_status(status, timestamp):
     ax1.set_ylim(0, total_pods)
 
     # Set x axis details
+    # Note: If the pod is deployed in < 1 second, there is only one status entry with time = 0.0
+    #       You can't set xlim to [0 - 0], so we have to set it to at least 1.0
     ax1.set_xlabel("Time (s)")
-    ax1.set_xlim(0, status[-1]["time"])
+    ax1.set_xlim(0, max(status[-1]["time"], 1.0))
 
     # add legend
     patches = [mpatches.Patch(color=c) for c in cs]
@@ -83,7 +88,7 @@ def plot_status(status, timestamp):
     plt.savefig("./logs/%s_breakdown.pdf" % (timestamp), bbox_inches="tight")
 
 
-def plot_control(df, timestamp, xmax=None, ymax=None):
+def plot_control(df, timestamp, xmax=None, ymax=None, xinter=None, yinter=None):
     """Plot controlplane data from the source code
 
     Phases:
@@ -156,12 +161,12 @@ def plot_control(df, timestamp, xmax=None, ymax=None):
     left = [0 for _ in range(len(y))]
 
     colors = {
-        "P1": "#6929c4",
-        "P2": "#1192e8",
-        "P3": "#005d5d",
-        "P4": "#9f1853",
-        "P5": "#fa4d56",
-        "P6": "#570408",
+        "S1: CWO": "#6929c4",
+        "S2: UWO": "#1192e8",
+        "S3: CPO": "#005d5d",
+        "S4: SP": "#9f1853",
+        "S5: CP": "#fa4d56",
+        "S6: CC": "#570408",
         "Deployed": "#198038",
     }
     cs = list(colors.values())
@@ -172,6 +177,13 @@ def plot_control(df, timestamp, xmax=None, ymax=None):
 
     # Calculate final bar to make all bars the same length
     max_time = df_plot["started_application (s)"].max()
+    if xmax is not None and xmax != max_time:
+        # Or fill to some custom xmax
+        max_time = xmax
+    elif xmax is None and max_time < 1.0:
+        # xmax should be at least 1.0
+        max_time = 1.0
+
     left = df_plot["started_application (s)"]
     diff = [max_time - l for l in left]
     plt.barh(y, diff, color=cs[-1], left=left, align="edge", height=bar_height)
@@ -183,15 +195,25 @@ def plot_control(df, timestamp, xmax=None, ymax=None):
 
     # Set y axis details
     ax1.set_ylabel("Pods")
-    ax1.set_ylim(0, len(y))
+    y_max = len(y)
     if ymax:
-        ax1.set_ylim(0, ymax)
+        y_max = ymax
+
+    ax1.set_ylim(0, y_max)
 
     # Set x axis details
     ax1.set_xlabel("Time (s)")
-    ax1.set_xlim(0, max_time)
+    x_max = max(1.0, max_time)
     if xmax:
-        ax1.set_xlim(0, xmax)
+        x_max = xmax
+
+    ax1.set_xlim(0, x_max)
+
+    # Set x/y ticks if argument passed
+    if xinter:
+        ax1.set_xticks(np.arange(0, x_max + 0.1, xinter))
+    if yinter:
+        ax1.set_yticks(np.arange(0, y_max + 0.1, yinter))
 
     # add legend
     patches = []
@@ -206,7 +228,7 @@ def plot_control(df, timestamp, xmax=None, ymax=None):
     plt.close(fig)
 
 
-def plot_p56(df, timestamp, xmax=None, ymax=None):
+def plot_p56(df, timestamp, xmax=None, ymax=None, xinter=None, yinter=None):
     """Plot controlplane data from the source code
 
     Phases:
@@ -253,11 +275,11 @@ def plot_p56(df, timestamp, xmax=None, ymax=None):
 
     colors = {
         "EMPTY": "#ffffff",
-        "P5-1": "#6929c4",
-        "P5-2": "#1192e8",
-        "P5-3": "#005d5d",
-        "P6-1": "#9f1853",
-        "P6-2": "#fa4d56",
+        r"$T_{cg} + T_{nn}$": "#6929c4",
+        r"$\sum_{i=0}^{V} T_{mv,i}$": "#1192e8",
+        r"$T_{cs}$": "#005d5d",
+        r"$\sum_{i=0}^{C} T_{cc,i}$": "#9f1853",
+        r"$\sum_{j=0}^{C} T_{sc,j}$": "#fa4d56",
         "Deployed": "#ffffff",
     }
     cs = list(colors.values())
@@ -279,15 +301,25 @@ def plot_p56(df, timestamp, xmax=None, ymax=None):
 
     # Set y axis details
     ax1.set_ylabel("Pods")
-    ax1.set_ylim(0, len(y))
+    y_max = len(y)
     if ymax:
-        ax1.set_ylim(0, ymax)
+        y_max = ymax
+
+    ax1.set_ylim(0, y_max)
 
     # Set x axis details
     ax1.set_xlabel("Time (s)")
-    ax1.set_xlim(0, max_time)
+    x_max = max(1.0, max_time)
     if xmax:
-        ax1.set_xlim(0, xmax)
+        x_max = xmax
+
+    ax1.set_xlim(0, x_max)
+
+    # Set x/y ticks if argument passed
+    if xinter:
+        ax1.set_xticks(np.arange(0, x_max + 0.1, xinter))
+    if yinter:
+        ax1.set_yticks(np.arange(0, y_max + 0.1, yinter))
 
     # add legend
     patches = []
@@ -297,72 +329,210 @@ def plot_p56(df, timestamp, xmax=None, ymax=None):
     colors.pop("EMPTY")
     colors.pop("Deployed")
     texts = colors.keys()
-    ax1.legend(patches, texts, loc="lower right", fontsize="16")
+    ax1.legend(patches, texts, loc="lower left", fontsize="16")
 
     # Save plot
     plt.savefig("./logs/%s_breakdown_intern_P56.pdf" % (timestamp), bbox_inches="tight")
     plt.close(fig)
 
-def plot_kata_only(df, timestamp, xmax=None, ymax=None):
+
+def plot_resources(df, timestamp, xmax=None, ymax=None, xinter=None, yinter=None):
+    """Plot resource utilization data
+
+    Args:
+        df (DataFrame): Pandas dataframe object with parsed timestamps per category
+        timestamp (time): Global timestamp used to save all files of this run
+        xmax (bool): Optional. Set the xmax of the plot by hand. Defaults to None.
+        ymax (bool): Optional. Set the ymax of the plot by hand. Defaults to None.
+    """
+    plot_resources_kube(df[0], timestamp, xmax, ymax, xinter, yinter)
+    plot_resources_os(df[1], timestamp, xmax, ymax, xinter, yinter)
+
+
+def plot_resources_kube(df, timestamp, xmax=None, ymax=None, xinter=None, yinter=None):
+    """Plot resources based on kubectl top command
+
+    Args:
+        df (DataFrame): Pandas dataframe object with parsed timestamps per category
+        timestamp (time): Global timestamp used to save all files of this run
+        xmax (bool): Optional. Set the xmax of the plot by hand. Defaults to None.
+        ymax (bool): Optional. Set the ymax of the plot by hand. Defaults to None.
+    """
+    # Create one plot for cpu and one for memory
     plt.rcParams.update({"font.size": 20})
     fig, ax1 = plt.subplots(figsize=(12, 4))
 
-    bar_height = 1.1
+    for column in df.columns:
+        if "_cpu" in column:
+            ax1.plot(df["Time (s)"], df[column], label=column)
 
-    df_plot = df.copy(deep=True)
-
-    y = [*range(len(df_plot["P1"]))]
-
-    left = [0 for _ in range(len(y))]
-
-    colors = {
-        "EMPTY": "#ffffff",
-        "P0": "#6929c4",
-        "P1": "#1192e8",
-        "P2": "#005d5d",
-        "P3": "#9f1853",
-        "Deployed": "#ffffff",
-    }
-    cs = list(colors.values())
-
-    for column, c in zip(df_plot, cs):
-        plt.barh(y, df_plot[column] - left, color=c, left=left, align="edge", height=bar_height)
-        left = df_plot[column]
-
-    # Calculate final bar to make all bars the same length
-    max_time = df_plot["P3"].max()
-    left = df_plot["P3"]
-    diff = [max_time - l for l in left]
-    plt.barh(y, diff, color=cs[-1], left=left, align="edge", height=bar_height)
-
-    # Set plot details
     ax1.yaxis.set_major_locator(MaxNLocator(integer=True))
     ax1.xaxis.set_major_locator(MaxNLocator(integer=True))
     ax1.grid(True)
 
     # Set y axis details
-    ax1.set_ylabel("Pods")
-    ax1.set_ylim(0, len(y))
+    ax1.set_ylabel("CPU Usage (millicpu)")
+    y_max = math.ceil(df.filter(like="_cpu").values.max() * 1.1)
     if ymax:
-        ax1.set_ylim(0, ymax)
+        y_max = ymax
+
+    ax1.set_ylim(0, y_max)
 
     # Set x axis details
     ax1.set_xlabel("Time (s)")
-    ax1.set_xlim(0, max_time)
-    if xmax:
-        ax1.set_xlim(0, xmax)
+    x_max = df["Time (s)"].values.max()
+    if ymax:
+        x_max = xmax
+
+    ax1.set_xlim(0, x_max)
+
+    # Set x/y ticks if argument passed
+    if xinter:
+        ax1.set_xticks(np.arange(0, x_max + 0.1, xinter))
+    if yinter:
+        ax1.set_yticks(np.arange(0, y_max + 0.1, yinter))
 
     # add legend
-    patches = []
-    for c in cs[1:-1]:
-        patches.append(mpatches.Patch(facecolor=c, edgecolor="k"))
+    ax1.legend(loc="best", fontsize="16")
 
-    colors.pop("EMPTY")
-    colors.pop("Deployed")
-    texts = colors.keys()
-    ax1.legend(patches, texts, loc="lower right", fontsize="16")
-
-    # Save plot
-    plt.savefig("./logs/%s_breakdown_intern_P56_kata.pdf" % (timestamp), bbox_inches="tight")
+    plt.savefig("./logs/%s_resources_cpu.pdf" % (timestamp), bbox_inches="tight")
     plt.close(fig)
-    return
+
+    # ------------------------------
+    # Now for memory
+    fig, ax1 = plt.subplots(figsize=(12, 4))
+
+    for column in df.columns:
+        if "_memory" in column:
+            ax1.plot(df["Time (s)"], df[column], label=column)
+
+    ax1.yaxis.set_major_locator(MaxNLocator(integer=True))
+    ax1.xaxis.set_major_locator(MaxNLocator(integer=True))
+    ax1.grid(True)
+
+    # Set y axis details
+    ax1.set_ylabel("Memory Usage (MB)")
+    y_max = math.ceil(df.filter(like="_memory").values.max() * 1.1)
+    if ymax:
+        y_max = ymax
+
+    ax1.set_ylim(0, y_max)
+
+    # Set x axis details
+    ax1.set_xlabel("Time (s)")
+    x_max = df["Time (s)"].values.max()
+    if ymax:
+        x_max = xmax
+
+    ax1.set_xlim(0, x_max)
+
+    # Set x/y ticks if argument passed
+    if xinter:
+        ax1.set_xticks(np.arange(0, x_max + 0.1, xinter))
+    if yinter:
+        ax1.set_yticks(np.arange(0, y_max + 0.1, yinter))
+
+    # add legend
+    ax1.legend(loc="best", fontsize="16")
+
+    plt.savefig("./logs/%s_resources_memory.pdf" % (timestamp), bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_resources_os(df, timestamp, xmax=None, ymax=None, xinter=None, yinter=None):
+    """Plot resources based on os-level resource metric commands
+
+    Args:
+        df (DataFrame): Pandas dataframe object with parsed timestamps per category
+        timestamp (time): Global timestamp used to save all files of this run
+        xmax (bool): Optional. Set the xmax of the plot by hand. Defaults to None.
+        ymax (bool): Optional. Set the ymax of the plot by hand. Defaults to None.
+    """
+    plt.rcParams.update({"font.size": 20})
+    fig, ax1 = plt.subplots(figsize=(12, 4))
+
+    for column in df.columns:
+        if "cpu-used" in column:
+            name = column
+            if "cloud0" in column:
+                name = "Control Plane"
+            else:
+                name = "Worker Node " + column.split("cloud")[1].split(" (")[0]
+            ax1.plot(df["Time (s)"], df[column], label=name)
+
+    ax1.yaxis.set_major_locator(MaxNLocator(integer=True))
+    ax1.xaxis.set_major_locator(MaxNLocator(integer=True))
+    ax1.grid(True)
+
+    # Set y axis details
+    ax1.set_ylabel("CPU Utilization (%)")
+    y_max = 100
+    if ymax:
+        y_max = ymax
+
+    ax1.set_ylim(0, y_max)
+
+    # Set x axis details
+    ax1.set_xlabel("Time (s)")
+    x_max = df["Time (s)"].values.max()
+    if xmax:
+        x_max = xmax
+
+    ax1.set_xlim(0, x_max)
+
+    # Set x/y ticks if argument passed
+    if xinter:
+        ax1.set_xticks(np.arange(0, x_max + 0.1, xinter))
+    if yinter:
+        ax1.set_yticks(np.arange(0, y_max + 0.1, yinter))
+
+    # add legend
+    ax1.legend(loc="best", fontsize="16")
+
+    plt.savefig("./logs/%s_resources_os_cpu.pdf" % (timestamp), bbox_inches="tight")
+    plt.close(fig)
+
+    # ------------------------------
+    # Now for memory
+    fig, ax1 = plt.subplots(figsize=(12, 4))
+
+    for column in df.columns:
+        if "memory-used" in column:
+            name = column
+            if "cloud0" in column:
+                name = "Control Plane"
+            else:
+                name = "Worker Node " + column.split("cloud")[1].split(" (")[0]
+            ax1.plot(df["Time (s)"], df[column], label=name)
+
+    ax1.yaxis.set_major_locator(MaxNLocator(integer=True))
+    ax1.xaxis.set_major_locator(MaxNLocator(integer=True))
+    ax1.grid(True)
+
+    # Set y axis details
+    ax1.set_ylabel("Memory Utilization (%)")
+    y_max = 100
+    if ymax:
+        y_max = ymax
+
+    ax1.set_ylim(0, y_max)
+
+    # Set x axis details
+    ax1.set_xlabel("Time (s)")
+    x_max = df["Time (s)"].values.max()
+    if xmax:
+        x_max = xmax
+
+    ax1.set_xlim(0, x_max)
+
+    # Set x/y ticks if argument passed
+    if xinter:
+        ax1.set_xticks(np.arange(0, x_max + 0.1, xinter))
+    if yinter:
+        ax1.set_yticks(np.arange(0, y_max + 0.1, yinter))
+
+    # add legend
+    ax1.legend(loc="best", fontsize="16")
+
+    plt.savefig("./logs/%s_resources_os_memory.pdf" % (timestamp), bbox_inches="tight")
+    plt.close(fig)

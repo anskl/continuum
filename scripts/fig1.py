@@ -1,5 +1,6 @@
 """Create a flipped csv for fig1
 Assume the csv is already correct
+See Google Cloud project for assumed CSV input
 """
 
 import argparse
@@ -24,12 +25,11 @@ def parse_data(df):
         dict: Dict with parsed data
     """
     csv = {
-        "Time (s)": [],
+        "Elapsed Time (s)": [],
         "Default Kubernetes": [],
-        "Managed Kubernetes": [],
-        "Containerd (threads=1)": [],
-        "Containerd (threads=8)": [],
-        "Our solution": [],
+        "GKE": [],
+        "Containerd": [],
+        "Columbo (our solution)": [],
     }
 
     # First add all time entries
@@ -38,19 +38,19 @@ def parse_data(df):
             continue
 
         for t in df[column]:
-            csv["Time (s)"].append(t)
+            csv["Elapsed Time (s)"].append(t)
 
     # Remove duplicate entries and sort
-    csv["Time (s)"] = [0.0] + csv["Time (s)"]
-    csv["Time (s)"] = list(set(csv["Time (s)"]))
-    csv["Time (s)"].sort()
+    csv["Elapsed Time (s)"] = [0.0] + csv["Elapsed Time (s)"]
+    csv["Elapsed Time (s)"] = list(set(csv["Elapsed Time (s)"]))
+    csv["Elapsed Time (s)"].sort()
 
     # Set entire list to zero
     for key in csv:
-        if key == "Time (s)":
+        if key == "Elapsed Time (s)":
             continue
 
-        csv[key] = [0] * len(csv["Time (s)"])
+        csv[key] = [0] * len(csv["Elapsed Time (s)"])
 
     # To prevent a large tail of 100 values
     finished = {}
@@ -58,7 +58,7 @@ def parse_data(df):
         finished[key] = False
 
     # Now add entries
-    for i, timestamp in enumerate(csv["Time (s)"]):
+    for i, timestamp in enumerate(csv["Elapsed Time (s)"]):
         for column in df:
             if column in ["Deployed Containers"]:
                 continue
@@ -80,13 +80,16 @@ def parse_data(df):
     return csv
 
 
-def plot_data(ax, df):
+def plot_data(df, timestamp):
     """Plot parsed data
 
     Args:
         df (dataframe): Dataframe with parsed data
         timestamp (datetime): Datetime object with current timestamp
     """
+    plt.rcParams.update({"font.size": 20})
+    fig, ax = plt.subplots(figsize=((12, 4)))
+
     colors = [
         "#6929c4",
         "#1192e8",
@@ -98,11 +101,11 @@ def plot_data(ax, df):
     ]
 
     for i, key in enumerate(df):
-        if key == "Time (s)":
+        if key == "Elapsed Time (s)":
             continue
 
         ax.plot(
-            df["Time (s)"],
+            df["Elapsed Time (s)"],
             df[key],
             color=colors[i - 1],
             linewidth=8.0,
@@ -114,13 +117,13 @@ def plot_data(ax, df):
     ax.grid(True)
 
     # Set y axis details
-    ax.set_ylabel("Containers" + "\n" + "Deployed")
+    ax.set_ylabel("Containers Deployed")
     ax.set_ylim(0, df["Default Kubernetes"].values[-1])
     plt.yticks(np.arange(0, 101, 20))
 
     # Set x axis details
-    ax.set_xlabel("Time (s)")
-    ax.set_xlim(0, math.ceil(df["Time (s)"].values[-1]) + 1)
+    ax.set_xlabel("Elapsed Time (s)")
+    ax.set_xlim(0, math.ceil(df["Elapsed Time (s)"].values[-1]) + 1)
 
     # add legend
     patches = []
@@ -130,70 +133,9 @@ def plot_data(ax, df):
     texts = df.columns.values[1:]
     ax.legend(patches, texts, loc="lower right", fontsize="16", bbox_to_anchor=(1.01, -0.03))
 
-
-def plot_bar(ax, timestamp):
-    """We take the last application/pod from the "Local Kubernetes" line from the main plot
-    And make a vertical stacked bar plot out of it
-
-    Args:
-        timestamp (datetime): Datetime object with current timestamp
-    """
-    # colors = [
-    #     "#6929c4",
-    #     "#1192e8",
-    #     "#005d5d",
-    #     "#9f1853",
-    #     "#fa4d56",
-    #     "#570408",
-    #     "#ffffff"
-    #     "#198038",
-    # ]
-
-    # We take the last application/pod from the "Local Kubernetes" line from the main plot
-    # And make a vertical stacked bar plot out of it
-    x = [""]
-    # y = {
-    #     "Create Workload Object": 0.248514413833618,
-    #     "Unpack Workload Object": 2.22330665588379,
-    #     "Create Pod Object": 3.9536349773407,
-    #     "Schedule Pod": 3.96205139160156,
-    #     "Create Pod": 11.7857611179352,
-    #     "Create Container": 12.1920666694641,
-    #     "Deployed": 14.0,
-    # }
-
-    # Change of hearts: Only plot 2 phases, scheduling and container deployment
-    y = {
-        "Schedule Application": 3.9536349773407,
-        "Deploy Application": 12.1920666694641,
-        "Deployed": 14.0,
-    }
-
-    colors = ("gray", "darkgray", "lightgray")
-
-    # Horizontal bar only needs differences
-    bottom = 0
-    for key, color in zip(y, colors):
-        y[key] -= bottom
-        ax.barh(x, y[key], left=bottom, height=1.0, color=color, alpha=0.99)
-        bottom += y[key]
-
-    # Set plot details
-    ax.grid(True)
-    ax.grid(axis="y")
-
-    # Set y axis details
-    ax.set_ylim(-0.25, 0.25)
-
-    patches = []
-    for color in colors:
-        patches.append(mpatches.Patch(facecolor=color, edgecolor="k"))
-
-    texts = list(y.keys())
-    ax.legend(patches, texts, loc="upper center", fontsize="16", ncol=3, bbox_to_anchor=(0.5, 1.8))
-
     # Save plot
     plt.savefig("./%s_fig1.pdf" % (timestamp), bbox_inches="tight")
+    plt.close(fig)
 
 
 def main(df):
@@ -206,18 +148,9 @@ def main(df):
     df_out = pd.DataFrame(csv)
 
     timestamp = time.strftime("%Y-%m-%d_%H:%M:%S", time.gmtime())
-    df_out.to_csv("./%s_fig1.csv" % (timestamp), index=False, encoding="utf-8")
+    # df_out.to_csv("./%s_fig1.csv" % (timestamp), index=False, encoding="utf-8")
 
-    plt.rcParams.update({"font.size": 20})
-    fig, (ax1, ax2) = plt.subplots(
-        nrows=2,
-        sharex=True,
-        gridspec_kw={"height_ratios": [1, 3.8], "hspace": 0.3},
-        figsize=((12, 5)),
-    )
-    plot_data(ax2, df_out)
-    plot_bar(ax1, timestamp)
-    plt.close(fig)
+    plot_data(df_out, timestamp)
 
 
 if __name__ == "__main__":

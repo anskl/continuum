@@ -11,5 +11,6 @@ logs/
 *node_modules
 scripts/*.csv
 scripts/*.pdf
+*.out
 configuration/experiment_kata/*.txt
 .vscode/launch.json

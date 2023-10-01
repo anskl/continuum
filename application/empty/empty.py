@@ -95,8 +95,8 @@ def time_delta(t, starttime):
         float: Possitive time delta
     """
     delta = t - starttime
-    seconds_per_hour = float(3600)
-    while delta < float(0):
+    seconds_per_hour = 3600.0
+    while delta < 0.0:
         delta += seconds_per_hour
 
     return delta
@@ -110,6 +110,8 @@ def format_output(
     starttime=None,
     worker_output=None,
     worker_description=None,
+    resource_output=None,
+    endtime=None,
     kata_ts=None,
 ):
     """Format processed output to provide useful insights (empty)
@@ -122,6 +124,7 @@ def format_output(
         starttime (datetime, optional): Invocation time of kubectl apply command
         worker_output (list(list(str)), optional): Output of each container ran on the edge
         worker_description (list(list(str)), optional): Extensive description of each container
+        endtime (str, optional): Timestamp of the slowest deployed pod
     """
     # Plot the status of each pod over time
     if status is not None:
@@ -130,9 +133,11 @@ def format_output(
         if control is not None:
             worker_metrics = fill_control(config, control, starttime, worker_output, worker_description)
             df = print_control(config, worker_metrics)
+            df_resources = print_resources(config, resource_output)
             validate_data(df)
             plot.plot_control(df, config["timestamp"])
             plot.plot_p56(df, config["timestamp"])
+            plot.plot_resources(df_resources, config["timestamp"], xmax=endtime)
             if kata_ts is not None:
                 df_kata = get_kata_df(df, kata_ts, starttime)
                 # print(list(df_kata))
@@ -270,15 +275,24 @@ def sort_on_time(timestamp, worker_metrics, tag, compare_tag, future_compare):
     # You can't directly insert in worker_metrics like this, so we first
     # find the timestamp to insert to in the sorted list, and then
     # find the right entry in worker_metrics to insert into
-    insertion_time = 100000.0
+    insertion_time = 100000
     for s in sorted_worker_metrics:
-        if s[tag] is None and (
-            (future_compare and timestamp < s[compare_tag]) or (not future_compare and timestamp > s[compare_tag])
-        ):
-            insertion_time = s[compare_tag]
-            break
+        if s[tag] is None:
+            if (future_compare and timestamp < s[compare_tag]) or (
+                not future_compare and timestamp > s[compare_tag]
+            ):
+                insertion_time = s[compare_tag]
+                break
 
-    if insertion_time == 100000.0:
+            logging.warning(
+                "WARNING: Expected insertion timestamp %s didn't succeed on %s to %s (future=%i)",
+                str(timestamp),
+                tag,
+                compare_tag,
+                int(future_compare),
+            )
+
+    if insertion_time == 100000:
         logging.error("ERROR: didn't find an entry to insert a %s print into", tag)
         logging.error(str(worker_metrics))
         sys.exit()
@@ -286,7 +300,7 @@ def sort_on_time(timestamp, worker_metrics, tag, compare_tag, future_compare):
     # Now insert in the real list given by searching for our timestamp
     insert = False
     for metric in worker_metrics:
-        if metric[compare_tag] == insertion_time:
+        if metric[compare_tag] == insertion_time and metric[tag] is None:
             metric[tag] = timestamp
             insert = True
             break
@@ -367,7 +381,7 @@ def check(
                 if component == "apiserver" or (
                     tag == "5_pod_object_create" and config["benchmark"]["kube_deployment"] in ["pod", "container"]
                 ):
-                    # See comments in next function: insert 5_pod_object_create on 7_scheduler_start
+                    # See comments in next function
                     timestamp = time_delta(t, starttime)
                     sort_on_time(timestamp, worker_metrics, tag, compare_tag, reverse)
                     i += 1
@@ -617,3 +631,52 @@ def validate_data(df):
         diff = df.loc[(df[first] > df[second])]
         if not diff.empty:
             logging.info("[WARNING]: %s < %s is not true for %i lines", first, second, len(diff))
+
+
+def print_resources(config, df):
+    """Modify the resource dataframe and save it to csv
+
+    Example:
+    timestamp cloud0matthijs_cpu  cloud0matthijs_memory  cloudcontrollermatthijs_cpu   ...
+    0.359692                 103                    419                         1481   ...
+    0.534534                 103                    419                         1481   ...
+    0.934234                 103                    419                         1481   ...
+    1.323432                 103                    419                         1481   ...
+
+    etcd_cpu  etcd_memory  apiserver_cpu  apiserver_memory  controller-manager_cpu     ...
+         948           39             28               196                     270     ...
+         948           39             28               196                     270     ...
+         948           39             28               196                     270     ...
+         948           39             28               196                     270     ...
+
+    Args:
+        config (dict): Parsed configuration
+        df (DataFrame): Resource metrics data
+
+    Returns:
+        (DataFrame) Pandas dataframe object with parsed timestamps per category
+    """
+    df_kube = df[0]
+    df_os = df[1]
+
+    df_kube.columns = ["Time (s)" if c == "timestamp" else c for c in df_kube.columns]
+    df_kube.columns = [
+        "controller_" + c.split("_")[-1] if "controller" in c else c for c in df_kube.columns
+    ]
+    df_kube.columns = [
+        c.replace(config["username"], "") if config["username"] in c else c for c in df_kube.columns
+    ]
+
+    # Save to csv
+    df_kube.to_csv(
+        "./logs/%s_dataframe_resources.csv" % (config["timestamp"]), index=False, encoding="utf-8"
+    )
+
+    # df os only needs to be saved - we already renamed it beforehand
+    df_os.to_csv(
+        "./logs/%s_dataframe_resources_os.csv" % (config["timestamp"]),
+        index=False,
+        encoding="utf-8",
+    )
+
+    return df

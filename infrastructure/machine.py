@@ -124,6 +124,7 @@ BASE_NAMES                  %s""" % (
         ssh=None,
         ssh_key=True,
         retryonoutput=False,
+        wait=True,
     ):
         """Execute a process using the subprocess library, return the output/error of the process
 
@@ -136,6 +137,7 @@ BASE_NAMES                  %s""" % (
             ssh (str, optional): VM to SSH into (instead of physical machine). Default to None
             ssh_key (bool, optional): Use the custom SSH key for VMs. Default to True
             retryonoutput (bool, optional): Retry command on empty output. Default to False
+            wait (bool, optional): Should we wait for output? Default to true
 
         Returns:
             list(list(str), list(str)): Return a list of [output, error] lists, one per command.
@@ -209,6 +211,10 @@ BASE_NAMES                  %s""" % (
                 )
                 processes.append(process)
 
+            # We may not be interested in the output at all
+            if not wait:
+                continue
+
             # Get outputs for this batch of commmands (blocking)
             for j, process in enumerate(processes):
                 # Use communicate() to prevent buffer overflows
@@ -276,10 +282,10 @@ BASE_NAMES                  %s""" % (
         """Get the amount of physical cores for this machine.
         This automatically functions as reachability check for this machine.
         """
-        # GCP uses Terraform (cloud), so the number of local cores won't matter
+        # GCP and AWS uses Terraform (cloud), so the number of local cores won't matter
         # Just set the value extremely high so everything can be scheduled on the
         # same "machine" (your local machine is seen as the cloud provider)
-        if config["infrastructure"]["provider"] == "gcp":
+        if config["infrastructure"]["provider"] in ["gcp", "aws"]:
             self.cores = 100000
             return
 

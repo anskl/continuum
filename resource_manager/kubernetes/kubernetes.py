@@ -7,6 +7,8 @@ import os
 import sys
 import time
 
+import pandas as pd
+
 from infrastructure import ansible
 
 
@@ -489,7 +491,10 @@ def launch_with_starttime(config, machines):
 
     # At least one [continuum] statement should be in the error log
     # But, do check if any real error statement is there
-    if error and not all("[CONTINUUM]" in l for l in error):
+    if error and not all(
+        any(x in l for x in ["[CONTINUUM]", "due to client-side throttling", "handshake timeout"])
+        for l in error
+    ):
         logging.error("Could not deploy pods: %s", "".join(error))
         sys.exit()
     elif error and not any("[CONTINUUM]" in l for l in error):
@@ -1193,7 +1198,7 @@ def get_control_output(config, machines, starttime, status):
                 if entry[0] >= starttime and entry[0] <= endtime:
                     parsed_copy[node][component].append(entry)
 
-    return parsed_copy
+    return parsed_copy, endtime
 
 
 def parse_custom_kubernetes_splits(line):
@@ -1226,3 +1231,160 @@ def parse_custom_kubernetes_splits(line):
 
     line = line.split("[CONTINUUM] ")[1]
     return time_obj, line
+
+
+def start_resource_metrics(config, machines):
+    """Start the resource metrics server by hand
+
+    Args:
+        config (dict): Parsed configuration
+        machines (list(Machine object)): List of machine objects representing physical machines
+    """
+    logging.info("Launch metric server")
+
+    # First wait for metrics api to be available
+    command = ["kubectl", "top", "nodes"]
+    while True:
+        _, error = machines[0].process(config, command, ssh=config["cloud_ssh"][0])[0]
+
+        if error and not all("[CONTINUUM]" in l for l in error):
+            logging.debug("Wait for metric-server to come online")
+            time.sleep(5)
+        else:
+            break
+
+    # Now that the api server is up, launch the script to gather data
+    command = "\"bash -c 'nohup python3 -u resource_usage.py -v > resource_usage.txt 2>&1 &'\""
+    machines[0].process(config, command, shell=True, ssh=config["cloud_ssh"][0], wait=False)
+
+    # Now launch the other scripts to get OS resource usage -> on all machines
+    command = (
+        "\"bash -c 'nohup python3 -u resource_usage_os.py -v > resource_usage_os.txt 2>&1 &'\""
+    )
+    machines[0].process(config, command, shell=True, ssh=config["cloud_ssh"], wait=False)
+
+
+def get_resource_output(config, machines, starttime, endtime):
+    """Get the resource usage data from .csv files from VMs and parse it
+
+    Args:
+        config (dict): Parsed configuration
+        machines (list(Machine object)): List of machine objects representing physical machines
+        starttime (datetime): Invocation time of kubectl apply command that launches the benchmark
+        endtime (datetime): Time at which the final application is deployed
+
+    Returns:
+        (dataframe): Pandas dataframe with resource utilization metrics during our benchmrak deploym
+    """
+    logging.info("Fetch the resource utilization data from the controlplane VM")
+
+    # Move the csv file from the VM to the host
+    command = [
+        "ansible-playbook",
+        "-i",
+        os.path.join(config["infrastructure"]["base_path"], ".continuum/inventory_vms"),
+        os.path.join(
+            config["infrastructure"]["base_path"],
+            ".continuum/cloud/resource_usage_back.yml",
+        ),
+    ]
+
+    output, error = machines[0].process(config, command)[0]
+
+    logging.debug("Check output for Ansible command [%s]", " ".join(command))
+    ansible.check_output((output, error))
+
+    # Same, but for OS metrics
+    command = [
+        "ansible-playbook",
+        "-i",
+        os.path.join(config["infrastructure"]["base_path"], ".continuum/inventory_vms"),
+        os.path.join(
+            config["infrastructure"]["base_path"],
+            ".continuum/cloud/resource_usage_os_back.yml",
+        ),
+    ]
+
+    output, error = machines[0].process(config, command)[0]
+
+    logging.debug("Check output for Ansible command [%s]", " ".join(command))
+    ansible.check_output((output, error))
+
+    df1 = filter_metrics_kube(config, starttime, endtime)
+    df2 = filter_metrics_os(config, starttime, endtime)
+
+    return df1, df2
+
+
+def filter_metrics_kube(config, starttime, endtime):
+    """Filter the metrics gathered via kubectl top
+
+    Args:
+        config (dict): Parsed configuration
+        starttime (datetime): Invocation time of kubectl apply command that launches the benchmark
+        endtime (datetime): Time at which the final application is deployed
+
+    Returns:
+        (dataframe): Pandas dataframe with resource utilization metrics during our benchmrak deploym
+    """
+    logging.debug("Filter kube metric stats")
+
+    # Now read the file via pandas and:
+    # - Only take the timestamps between the start and end of the benchmark
+    # - Offset these values compared to the start time of the benchmark (so row 1 starts near 0.0s)
+    path = os.path.join(config["infrastructure"]["base_path"], ".continuum/resource_usage.csv")
+    df = pd.read_csv(path)
+    df["timestamp"] = df["timestamp"] / 10**9
+
+    # Disable warning generated by the lines below
+    pd.options.mode.chained_assignment = None
+
+    # Take 1.0 second more on both ends so we can plot the t=0 and t=endtime points
+    df_filtered = df.loc[
+        (df["timestamp"] > (starttime - 1.0)) & (df["timestamp"] < (endtime + 1.0))
+    ]
+    df_filtered["timestamp"] -= starttime
+    return df_filtered
+
+
+def filter_metrics_os(config, starttime, endtime):
+    """Filter the metrics gathered via OS tools
+
+    Args:
+        config (dict): Parsed configuration
+        starttime (datetime): Invocation time of kubectl apply command that launches the benchmark
+        endtime (datetime): Time at which the final application is deployed
+
+    Returns:
+        (dataframe): Pandas dataframe with resource utilization metrics during our benchmrak deploym
+    """
+    logging.debug("Filter os metric stats")
+
+    # Gather all data from each VM first
+    dfs = []
+    for vm_name in [vm_name.split("@")[0] for vm_name in config["cloud_ssh"]]:
+        path = os.path.join(
+            config["infrastructure"]["base_path"], ".continuum/resource_usage_os-%s.csv" % (vm_name)
+        )
+        df = pd.read_csv(path)
+        df["timestamp"] = df["timestamp"] / 10**9
+
+        df_filtered = df.loc[
+            (df["timestamp"] > (starttime - 1.0)) & (df["timestamp"] < (endtime + 1.0))
+        ]
+        df_filtered["timestamp"] -= starttime
+        df_filtered.rename(
+            columns={
+                "timestamp": "Time (s)",
+                "cpu-used (%)": "cpu-used %s" % (vm_name) + " (%)",
+                "memory-used (%)": "memory-used %s" % (vm_name) + " (%)",
+            },
+            inplace=True,
+        )
+
+        # Save with deep copy just to be safe
+        dfs.append(df_filtered.copy(deep=True))
+
+    # Now save in one big dataframe
+    df_final = pd.concat(dfs)
+    return df_final

@@ -54,31 +54,34 @@ class MicroBenchmark(replicate_paper.Experiment):
         if args.experiment == "microbenchmark":
             # This ordering to start with all local nodes -> forces consistent images
             self.experiments = [
-                {"path": "nodes/node_4"},
-                {"path": "nodes/node_2"},
-                {"path": "nodes/node_1"},
-                {"path": "constant_total_pods/node_1"},
-                {"path": "constant_total_pods/node_2"},
-                {"path": "constant_total_pods/node_4"},
-                {"path": "constant_total_pods/node_8"},
-                {"path": "deployment/call_1"},
-                {"path": "deployment/call_100"},
-                {"path": "deployment/container_1"},
-                {"path": "deployment/container_100"},
-                {"path": "deployment/file_1"},
-                {"path": "deployment/file_100"},
-                {"path": "pods_per_node/pod_1"},
-                {"path": "pods_per_node/pod_10"},
-                {"path": "pods_per_node/pod_100"},
+                # {"path": "nodes/node_4"},
+                # {"path": "nodes/node_2"},
+                # {"path": "nodes/node_1"},
+                # {"path": "constant_total_pods/node_1"},
+                # {"path": "constant_total_pods/node_2"},
+                # {"path": "constant_total_pods/node_4"},
+                # {"path": "constant_total_pods/node_8"},
+                # {"path": "deployment/call_1", "xmax": 1.0, "xinter": 0.2},
+                {"path": "deployment/call_100", "xmax": 28, "xinter": 4},
+                # {"path": "deployment/container_1"},
+                # {"path": "deployment/container_100"},
+                # {"path": "deployment/file_1"},
+                # {"path": "deployment/file_100"},
+                # {"path": "pods_per_node/pod_1"},
+                # {"path": "pods_per_node/pod_10"},
+                # {"path": "pods_per_node/pod_100"},
             ]
 
             # GCP has more infrastructure so bigger configurations
             if args.infrastructure == "gcp":
-                self.experiments += [
-                    {"path": "constant_total_pods/node_16"},
-                    {"path": "nodes/node_8"},
-                    {"path": "nodes/node_16"},
-                ]
+                # If something goes wrong after all executions, only 2 VMs from pod_100 are
+                # running, not the 16 from node_16. This saves money if this script is running
+                # in the night and we can't stop the VMs by hand.
+                self.experiments = [
+                    # {"path": "constant_total_pods/node_16"},
+                    # {"path": "nodes/node_8"},
+                    # {"path": "nodes/node_16"},
+                ] + self.experiments
 
     def __repr__(self):
         """Returns this string when called as print(object)"""
@@ -141,7 +144,7 @@ xargs -I %% sh -c \"virsh destroy %%\""
             logging.debug("------------------------------------")
             logging.debug("\n%s", "".join(output))
 
-            if error != []:
+            if error:
                 logging.debug("------------------------------------")
                 logging.debug("ERROR")
                 logging.debug("------------------------------------")
@@ -157,7 +160,7 @@ xargs -I %% sh -c \"virsh destroy %%\""
                 run["output"] = output
                 f.close()
 
-    def _find_file(self, path, is_cfg=False, is_log=False, is_csv=False):
+    def _find_file(self, path, is_cfg=False, is_log=False, is_csv=False, resource=0):
         """Find a file with a .cfg / .log / .csv extention for an experiment
         If found, return the file
 
@@ -166,6 +169,10 @@ xargs -I %% sh -c \"virsh destroy %%\""
             is_cfg (bool, optional): Append .cfg. Defaults to False.
             is_log (bool, optional): Append .log. Defaults to False.
             is_csv (bool, optional): Append .csv. Defaults to False.
+            resource (int, optional): Find resource .csv. Default to 0.
+                0 = find *dataframe.csv
+                1 = find *resources.csv
+                2 = find *resources_os.csv
 
         Returns:
             str: Path with .cfg or .log appended
@@ -203,7 +210,12 @@ xargs -I %% sh -c \"virsh destroy %%\""
             elif file.endswith(".log") and is_log:
                 files_of_interest.append(file)
             elif file.endswith(".csv") and is_csv:
-                files_of_interest.append(file)
+                if not resource and "resources" not in file:
+                    files_of_interest.append(file)
+                elif resource == 1 and "resources.csv" in file:
+                    files_of_interest.append(file)
+                elif resource == 2 and "resources_os.csv" in file:
+                    files_of_interest.append(file)
 
         if not files_of_interest:
             if is_cfg:
@@ -256,6 +268,8 @@ xargs -I %% sh -c \"virsh destroy %%\""
             # csv file is created at the end of a run, log at the start
             # So if csv exists, log exists -> and we only need the csv file
             csv = self._find_file(experiment["path"], is_csv=True)
+            csv_resource = self._find_file(experiment["path"], is_csv=True, resource=1)
+            csv_resource_os = self._find_file(experiment["path"], is_csv=True, resource=2)
 
             if csv == "":
                 # File does not exist, run entire framework
@@ -269,7 +283,20 @@ xargs -I %% sh -c \"virsh destroy %%\""
             elif self.do_plot:
                 # File does exist, only run plot code
                 logging.info("To plot: %s", cfg)
-                run = {"file": csv, "destination": os.path.dirname(csv)}
+                run = {
+                    "file": csv,
+                    "resource": csv_resource,
+                    "resource_os": csv_resource_os,
+                    "destination": os.path.dirname(csv),
+                }
+
+                # Check for custom plot values
+                for i in ["xmax", "ymax", "xinter", "yinter"]:
+                    if i in experiment:
+                        run[i] = experiment[i]
+                    else:
+                        run[i] = None
+
                 self.plots.append(run)
 
     def check_resume(self):
@@ -289,8 +316,34 @@ xargs -I %% sh -c \"virsh destroy %%\""
                 # Full sort every category individually
                 df = df.transform(np.sort)
 
-            plot.plot_control(df, timestamp)
-            plot.plot_p56(df, timestamp)
+            plot.plot_control(
+                df,
+                timestamp,
+                xmax=p["xmax"],
+                ymax=p["ymax"],
+                xinter=p["xinter"],
+                yinter=p["yinter"],
+            )
+            plot.plot_p56(
+                df,
+                timestamp,
+                xmax=p["xmax"],
+                ymax=p["ymax"],
+                xinter=p["xinter"],
+                yinter=p["yinter"],
+            )
+
+            # Now plot resources
+            df1 = pd.read_csv(p["resource"])
+            df2 = pd.read_csv(p["resource_os"])
+            plot.plot_resources(
+                [df1, df2],
+                timestamp,
+                xmax=p["xmax"],
+                ymax=p["ymax"],
+                xinter=p["xinter"],
+                yinter=p["yinter"],
+            )
 
             # Now move PDF back to the correct folder
             command = "mv logs/%s* %s" % (timestamp, p["destination"])
@@ -317,6 +370,10 @@ def main(args):
     exp.generate()
     exp.check_resume()
     exp.run_commands()
+
+    command = ["terraform", "-chdir=/home/matthijs/.continuum/images", "destroy", "--auto-approve"]
+    replicate_paper.execute(command)
+
     exp.parse_output()
     exp.plot()
     exp.print_result()
