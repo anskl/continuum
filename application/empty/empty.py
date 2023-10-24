@@ -150,13 +150,13 @@ def format_output(
                 df_kata.to_csv(path, index=False, encoding="utf-8")
 
                 # tmp start -----------------------------------------------------------
-                import subprocess
-                cmd1 = f"head -n 1 {path}"
-                output = f"{config['benchmark']['runtime']}_{config['infrastructure']['cloud_nodes']-1}_{config['benchmark']['applications_per_worker']}.csv"
-                cmd2 = f"tail -n +2 {path} | tac >> {output}"
-                first_line = subprocess.check_output(cmd1, shell=True).decode('utf-8')
-                with open('output.txt', 'w') as f: f.write(first_line)
-                subprocess.run(cmd2, shell=True)
+                # import subprocess
+                # cmd1 = f"head -n 1 {path}"
+                # output = f"{config['benchmark']['runtime']}_{config['infrastructure']['cloud_nodes']-1}_{config['benchmark']['applications_per_worker']}.csv"
+                # cmd2 = f"tail -n +2 {path} | tac >> {output}"
+                # first_line = subprocess.check_output(cmd1, shell=True).decode('utf-8')
+                # with open('output.txt', 'w') as f: f.write(first_line)
+                # subprocess.run(cmd2, shell=True)
                 # tmp end -------------------------------------------------------------
 
                 # plot.plot_kata_only(df_kata, config["timestamp"])
